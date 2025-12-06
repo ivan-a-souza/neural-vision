@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Neural Vision v6.8 - Cross Device</title>
+    <title>Neural Vision v7.0 - Binary Protocol</title>
     
     <!-- TensorFlow.js -->
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
@@ -64,7 +64,6 @@
             box-shadow: 0 0 15px rgba(0, 243, 255, 0.3);
         }
 
-        /* Loaders & Screens */
         #loader, #error-screen, #start-screen, #processing-screen {
             position: fixed; inset: 0; z-index: 100; background: #000;
             display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -112,11 +111,11 @@
         <p id="loader-text" class="text-gray-500 mt-2 font-mono text-[10px] uppercase">Inicializando...</p>
     </div>
 
-    <!-- Processing Backup -->
+    <!-- Processing Binary -->
     <div id="processing-screen">
         <div class="w-12 h-12 border-4 border-gray-800 border-t-green-400 rounded-full animate-spin mb-6"></div>
-        <h1 class="text-xl font-bold text-green-400">A PROCESSAR</h1>
-        <p class="text-gray-400 mt-2 text-xs">Lendo arquivo de memória...</p>
+        <h1 class="text-xl font-bold text-green-400">PROCESSANDO BINÁRIO</h1>
+        <p class="text-gray-400 mt-2 text-xs">Descompactando Tensores...</p>
     </div>
 
     <!-- Error -->
@@ -191,17 +190,16 @@
     <!-- Modal Settings -->
     <div id="settings-modal" class="modal-wrap">
         <div class="modal-body">
-            <h3 class="text-lg font-bold mb-4">Dados</h3>
+            <h3 class="text-lg font-bold mb-4">Dados (Binário)</h3>
             <div class="grid grid-cols-2 gap-3 mb-4">
-                <button onclick="downloadData()" class="py-4 bg-gray-800 rounded-xl text-xs font-bold flex flex-col items-center gap-2 hover:bg-gray-700 transition">
+                <button onclick="downloadBinary()" class="py-4 bg-gray-800 rounded-xl text-xs font-bold flex flex-col items-center gap-2 hover:bg-gray-700 transition">
                     <i data-lucide="download" width="20" class="text-cyan-400"></i>
-                    <span>Baixar Backup</span>
+                    <span>Baixar .nvis</span>
                 </button>
                 <label class="py-4 bg-gray-800 rounded-xl text-xs font-bold flex flex-col items-center gap-2 cursor-pointer hover:bg-gray-700 transition">
                     <i data-lucide="upload" width="20" class="text-green-400"></i>
-                    <span>Restaurar</span>
-                    <!-- CORREÇÃO: Accept explícito para Android -->
-                    <input type="file" class="hidden" accept=".json,application/json" onchange="uploadData(this)">
+                    <span>Restaurar .nvis</span>
+                    <input type="file" class="hidden" accept=".nvis,.bin" onchange="uploadBinary(this)">
                 </label>
             </div>
             <button onclick="clearMemory()" class="w-full py-3 text-red-400 border border-red-900/50 rounded-xl hover:bg-red-900/20 font-bold text-xs mb-3">
@@ -243,7 +241,6 @@
         async function init() {
             try {
                 await tryStartCamera();
-
                 document.getElementById('loader-text').innerText = "Carregando Cérebro...";
                 
                 const [ssd, mobile] = await Promise.all([
@@ -255,16 +252,14 @@
                 
                 classifier = knnClassifier.create();
                 
-                try {
-                    await loadDataFromStorage();
-                } catch(e) { console.log("Sem memória local."); }
+                // Tenta carregar dados do local storage (agora em binário base64 se possível, ou fallback)
+                try { await loadDataFromStorage(); } catch(e) {}
 
                 loader.classList.add('opacity-0');
                 setTimeout(() => loader.remove(), 500);
                 
                 isRunning = true;
                 gameLoop();
-
             } catch (e) {
                 console.error(e);
                 showError("Erro: " + e.message);
@@ -452,122 +447,184 @@
             });
         }
 
-        async function serializeClassifier() {
-            const dataset = classifier.getClassifierDataset();
-            let datasetObj = {};
-            Object.keys(dataset).forEach((key) => {
-                let data = dataset[key].dataSync();
-                datasetObj[key] = {
-                    data: Array.from(data),
-                    shape: dataset[key].shape 
-                };
-            });
-            return JSON.stringify(datasetObj);
-        }
+        // --- PROTOCOLO BINÁRIO (.nvis) ---
+        // Format: [4 bytes MAGIC "NVIS"] [4 bytes JSON_LEN] [JSON_BYTES] [RAW_FLOAT32_BYTES]
 
-        function deserializeClassifier(jsonStr) {
-            const datasetObj = JSON.parse(jsonStr);
-            const dataset = {};
-            
-            Object.keys(datasetObj).forEach((key) => {
-                const entry = datasetObj[key];
-                let cleanData = entry.data;
-                if (!Array.isArray(cleanData)) cleanData = Object.values(cleanData);
+        async function downloadBinary() {
+            if (classifier.getNumClasses() === 0) return showToast("Nada para salvar.", true);
 
-                if (Array.isArray(entry)) {
-                     dataset[key] = tf.tensor(entry, [entry.length / 1024, 1024], 'float32');
-                } else {
-                    dataset[key] = tf.tensor(cleanData, entry.shape, 'float32');
-                }
-            });
-            classifier.clearAllClasses();
-            classifier.setClassifierDataset(dataset);
-        }
-
-        async function saveDataToStorage() {
             try {
-                const json = await serializeClassifier();
-                localStorage.setItem('neural-v6-pro', json);
-            } catch(e) { console.warn("Storage cheio."); }
-        }
-
-        async function loadDataFromStorage() {
-            const json = localStorage.getItem('neural-v6-pro');
-            if(json) {
-                deserializeClassifier(json);
-                updateCount();
-            }
-        }
-
-        async function downloadData() {
-            try {
-                if (classifier.getNumClasses() === 0) return showToast("Nada para salvar.", true);
-                const json = await serializeClassifier();
+                const dataset = classifier.getClassifierDataset();
                 
-                const blob = new Blob([json], {type: "application/json"});
+                // 1. Preparar Manifesto (Metadados)
+                let manifest = {};
+                let totalElements = 0;
+                
+                Object.keys(dataset).forEach((label) => {
+                    const tensor = dataset[label];
+                    const size = tensor.size;
+                    manifest[label] = {
+                        shape: tensor.shape,
+                        length: size
+                    };
+                    totalElements += size;
+                });
+
+                const manifestStr = JSON.stringify(manifest);
+                const manifestBytes = new TextEncoder().encode(manifestStr);
+                const manifestLen = manifestBytes.length;
+
+                // 2. Criar Buffer Final
+                // Header (4) + Len (4) + Manifest + Data (float32 = 4 bytes per num)
+                const totalByteSize = 4 + 4 + manifestLen + (totalElements * 4);
+                const buffer = new ArrayBuffer(totalByteSize);
+                const view = new DataView(buffer);
+                const uint8View = new Uint8Array(buffer);
+                const float32View = new Float32Array(buffer);
+
+                // Escrever Magic "NVIS"
+                uint8View.set([78, 86, 73, 83], 0); // ASCII NVIS
+                
+                // Escrever Tamanho do Manifesto
+                view.setUint32(4, manifestLen, true); // Little endian
+
+                // Escrever Manifesto
+                uint8View.set(manifestBytes, 8);
+
+                // Escrever Dados (Float32)
+                let offsetFloat = (8 + manifestLen) / 4; 
+                // Se o offset não for múltiplo de 4, precisamos alinhar?
+                // JS DataView lida com isso, mas Float32Array precisa de alinhamento.
+                // Vamos usar DataView para ser seguro ou garantir padding.
+                // Simplificação: vamos escrever float por float usando DataView se não estiver alinhado,
+                // mas para performance, idealmente usamos Float32Array.
+                // Truque: O header é 8 bytes (alinhado). Manifest length varia.
+                // Vamos preencher o manifesto com espaços para alinhar a 4 bytes se preciso.
+                // Mas para manter simples e robusto, usaremos DataView para escrever os floats.
+                
+                let currentByteOffset = 8 + manifestLen;
+                
+                Object.keys(dataset).forEach((label) => {
+                    const data = dataset[label].dataSync();
+                    for(let i=0; i<data.length; i++) {
+                        view.setFloat32(currentByteOffset, data[i], true);
+                        currentByteOffset += 4;
+                    }
+                });
+
+                // Download
+                const blob = new Blob([buffer], {type: "application/octet-stream"});
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.style.display = 'none';
                 a.href = url;
-                a.download = `neural_memory_${new Date().getTime()}.json`;
-                
+                a.download = `neural_memory_${new Date().getTime()}.nvis`;
                 document.body.appendChild(a);
                 a.click();
                 setTimeout(() => { document.body.removeChild(a); window.URL.revokeObjectURL(url); }, 100);
-                showToast("Download Iniciado!");
+                showToast("Arquivo .nvis gerado!");
+
             } catch(e) {
                 console.error(e);
-                showToast("Erro ao criar arquivo", true);
+                showToast("Erro ao gerar binário", true);
             }
         }
 
-        // --- UPLOAD CORRIGIDO PARA XIAOMI ---
-        function uploadData(input) {
+        function uploadBinary(input) {
             const file = input.files[0];
             if(!file) return;
 
-            // Feedback visual imediato
             processingScreen.style.display = 'flex';
             
             const reader = new FileReader();
-            
             reader.onload = (e) => {
                 try {
-                    const jsonStr = e.target.result;
+                    const buffer = e.target.result;
+                    const view = new DataView(buffer);
+                    const uint8View = new Uint8Array(buffer);
+
+                    // 1. Validar Magic "NVIS"
+                    if(uint8View[0] !== 78 || uint8View[1] !== 86 || uint8View[2] !== 73 || uint8View[3] !== 83) {
+                        throw new Error("Formato de arquivo inválido (Magic Bytes incorretos)");
+                    }
+
+                    // 2. Ler Manifesto
+                    const manifestLen = view.getUint32(4, true);
+                    const manifestBytes = uint8View.slice(8, 8 + manifestLen);
+                    const manifestStr = new TextDecoder().decode(manifestBytes);
+                    const manifest = JSON.parse(manifestStr);
+
+                    // 3. Reconstruir Tensores
+                    let currentByteOffset = 8 + manifestLen;
+                    const newDataset = {};
+
+                    Object.keys(manifest).forEach(label => {
+                        const info = manifest[label];
+                        const length = info.length;
+                        const floats = new Float32Array(length);
+                        
+                        for(let i=0; i<length; i++) {
+                            floats[i] = view.getFloat32(currentByteOffset, true);
+                            currentByteOffset += 4;
+                        }
+                        
+                        newDataset[label] = tf.tensor(floats, info.shape);
+                    });
+
+                    classifier.clearAllClasses();
+                    classifier.setClassifierDataset(newDataset);
                     
-                    // Validação básica se é JSON válido
-                    if (!jsonStr || jsonStr.trim() === "") throw new Error("Arquivo vazio");
+                    // Tenta salvar localmente em JSON tradicional para persistência rápida
+                    saveDataToStorage(); 
                     
-                    deserializeClassifier(jsonStr);
-                    saveDataToStorage();
                     updateCount();
-                    
                     processingScreen.style.display = 'none';
-                    showToast("Sucesso! Memória Restaurada.");
+                    showToast("Sucesso! Memória carregada.");
                     closeSettings();
+
                 } catch(err) {
                     processingScreen.style.display = 'none';
                     showToast("Arquivo Inválido", true);
-                    alert("Erro ao ler backup: " + err.message);
+                    alert("Erro: " + err.message);
                 }
             };
-            
-            reader.onerror = () => {
-                processingScreen.style.display = 'none';
-                showToast("Erro ao ler arquivo", true);
-            };
-
-            // Timeout de segurança caso o navegador trave
-            setTimeout(() => {
-                if(processingScreen.style.display === 'flex') {
-                    processingScreen.style.display = 'none';
-                    showToast("Tempo limite excedido", true);
-                }
-            }, 10000);
-
-            reader.readAsText(file);
+            reader.readAsArrayBuffer(file);
         }
 
+        // --- MANTER COMPATIBILIDADE LOCAL (JSON) ---
+        async function saveDataToStorage() {
+            try {
+                // Para local storage, mantemos JSON simples pois é rápido para dados pequenos
+                // Se ficar muito grande, o binário é a única saída para backup
+                const dataset = classifier.getClassifierDataset();
+                let datasetObj = {};
+                Object.keys(dataset).forEach((key) => {
+                    let data = dataset[key].dataSync();
+                    datasetObj[key] = { data: Array.from(data), shape: dataset[key].shape };
+                });
+                localStorage.setItem('neural-v6-pro', JSON.stringify(datasetObj));
+            } catch(e) { console.warn("Storage local cheio."); }
+        }
+
+        async function loadDataFromStorage() {
+            const str = localStorage.getItem('neural-v6-pro');
+            if (str) {
+                const obj = JSON.parse(str);
+                const ds = {};
+                Object.keys(obj).forEach((key) => {
+                    const entry = obj[key];
+                    if (Array.isArray(entry)) {
+                        ds[key] = tf.tensor(entry, [entry.length / 1024, 1024]);
+                    } else {
+                        ds[key] = tf.tensor(entry.data, entry.shape);
+                    }
+                });
+                classifier.setClassifierDataset(ds);
+                updateCount();
+            }
+        }
+
+        // --- UI ---
         function triggerTraining() {
             try {
                 if (tempEmbedding) tempEmbedding.dispose();
@@ -575,14 +632,11 @@
                     const eyeCanvas = document.getElementById('neural-eye');
                     return models.mobile.infer(tf.browser.fromPixels(eyeCanvas), true);
                 });
-
                 const eyeCanvas = document.getElementById('neural-eye');
                 document.getElementById('preview-img').src = eyeCanvas.toDataURL();
                 document.getElementById('ai-guess').innerText = centerObject.label;
-                
                 const input = document.getElementById('label-input');
                 input.value = centerObject.source === 'auto' ? centerObject.label : (centerObject.source === 'memory' ? centerObject.label : "");
-                
                 document.getElementById('train-modal').classList.add('active');
                 setTimeout(() => input.focus(), 100);
             } catch(e) { showToast("Erro ao capturar", true); }
@@ -631,5 +685,3 @@
     </script>
 </body>
 </html>
-
-
