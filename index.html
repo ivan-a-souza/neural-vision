@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Neural Vision v6.6 - Backup Fix</title>
+    <title>Neural Vision v6.7 - Universal</title>
     
     <!-- TensorFlow.js -->
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
@@ -139,7 +139,7 @@
             </div>
             <div class="flex gap-2">
                 <div class="glass-panel flex flex-col justify-center px-3 mr-2">
-                    <span class="text-[9px] text-gray-400 uppercase font-bold">Exemplos</span>
+                    <span class="text-[9px] text-gray-400 uppercase font-bold">Memória</span>
                     <span id="mem-count" class="text-lg font-mono text-cyan-400 font-bold leading-none">0</span>
                 </div>
                 <button onclick="switchCamera()" class="btn-round"><i data-lucide="switch-camera" width="20"></i></button>
@@ -229,11 +229,9 @@
             'book': 'Livro', 'remote': 'Comando', 'tv': 'Televisão', 'potted plant': 'Planta'
         };
 
-        // --- INICIALIZAÇÃO ---
         async function init() {
             try {
                 await tryStartCamera();
-
                 document.getElementById('loader-text').innerText = "Carregando Cérebro...";
                 
                 const [ssd, mobile] = await Promise.all([
@@ -247,16 +245,13 @@
                 
                 try {
                     await loadDataFromStorage();
-                } catch(e) {
-                    console.log("Sem memória local.");
-                }
+                } catch(e) { console.log("Sem memória local."); }
 
                 loader.classList.add('opacity-0');
                 setTimeout(() => loader.remove(), 500);
                 
                 isRunning = true;
                 gameLoop();
-
             } catch (e) {
                 console.error(e);
                 showError("Erro: " + e.message);
@@ -270,7 +265,7 @@
                     video: { facingMode: facingMode, width: { ideal: 1280 }, height: { ideal: 720 } }
                 });
                 video.srcObject = stream;
-                return new Promise((resolve, reject) => {
+                return new Promise((resolve) => {
                     video.onloadedmetadata = () => {
                         video.play().then(resolve).catch(() => {
                             loader.style.display = 'none';
@@ -286,9 +281,7 @@
 
         function startCameraManual() {
             document.getElementById('start-screen').style.display = 'none';
-            video.play().then(() => {
-                if(!models.ssd) loader.style.display = 'flex';
-            }).catch(e => showError(e));
+            video.play().then(() => { if(!models.ssd) loader.style.display = 'flex'; }).catch(e => showError(e));
         }
 
         function showError(msg) {
@@ -303,7 +296,6 @@
             tryStartCamera().then(() => { isRunning = true; gameLoop(); });
         }
 
-        // --- ENGINE ---
         async function gameLoop() {
             if (!isRunning) return;
 
@@ -324,7 +316,6 @@
 
             if (video.readyState >= 2) {
                 ctx.drawImage(video, startX, startY, drawW, drawH);
-                
                 try {
                     const predictions = await models.ssd.detect(video, 30, 0.25);
                     const scale = drawW / video.videoWidth;
@@ -337,23 +328,19 @@
                     }));
                     await analyzeCenter(startX, startY, scale);
                 } catch (e) { }
-
                 drawHUD();
             }
             requestAnimationFrame(gameLoop);
         }
 
-        // --- INTELLIGENCE ---
         async function analyzeCenter(offX, offY, scale) {
             const size = 250; 
             const cx = canvas.width / 2;
             const cy = canvas.height / 2;
-            
             let label = null;
             let isKnown = false;
             let source = 'none';
 
-            // 1. Memória
             const exampleCounts = classifier.getClassExampleCount();
             const totalExamples = Object.values(exampleCounts).reduce((a, b) => a + b, 0);
             
@@ -386,7 +373,6 @@
                 neuralEye.drawImage(video, vidCX - vidSize/2, vidCY - vidSize/2, vidSize, vidSize, 0, 0, 224, 224);
             }
 
-            // 2. Auto
             if (!isKnown) {
                 const centerBox = detectedBoxes.find(b => cx >= b.x && cx <= (b.x + b.w) && cy >= b.y && cy <= (b.y + b.h));
                 if (centerBox) {
@@ -397,9 +383,7 @@
                     source = 'auto';
                 }
             }
-
             centerObject = { label: label || "Desconhecido", isKnown, source };
-            
             if (isKnown) {
                 statusDiv.innerText = label;
                 statusDiv.style.color = source === 'memory' ? '#00f3ff' : '#ffcc00';
@@ -454,33 +438,74 @@
             });
         }
 
-        // --- BACKUP ROBUSTO (CORRIGIDO) ---
+        // --- BACKUP & RESTORE UNIVERSAL ---
 
-        function downloadData() {
-            if (classifier.getNumClasses() === 0) {
-                return showToast("Nada para salvar. Treine algo primeiro.", true);
-            }
+        async function serializeClassifier() {
+            const dataset = classifier.getClassifierDataset();
+            let datasetObj = {};
+            
+            Object.keys(dataset).forEach((key) => {
+                let data = dataset[key].dataSync(); 
+                // Convertendo TypedArray para Array comum para garantir compatibilidade
+                datasetObj[key] = {
+                    data: Array.from(data),
+                    shape: dataset[key].shape 
+                };
+            });
+            return JSON.stringify(datasetObj);
+        }
 
+        function deserializeClassifier(jsonStr) {
+            const datasetObj = JSON.parse(jsonStr);
+            const dataset = {};
+            
+            Object.keys(datasetObj).forEach((key) => {
+                const entry = datasetObj[key];
+                
+                // Sanitização Universal
+                let cleanData = entry.data;
+                
+                // Alguns browsers salvam array como objeto {0: x, 1: y...}. Corrigimos aqui.
+                if (!Array.isArray(cleanData)) {
+                     // Tenta converter objeto de volta para array se possível
+                     cleanData = Object.values(cleanData);
+                }
+
+                // Legado (versões antigas que salvavam só o array sem shape)
+                if (Array.isArray(entry)) {
+                     dataset[key] = tf.tensor(entry, [entry.length / 1024, 1024], 'float32');
+                } else {
+                    // Novo formato: Forçar float32
+                    dataset[key] = tf.tensor(cleanData, entry.shape, 'float32');
+                }
+            });
+            
+            classifier.clearAllClasses();
+            classifier.setClassifierDataset(dataset);
+        }
+
+        async function saveDataToStorage() {
             try {
-                // Sincroniza dados da memória
-                const dataset = classifier.getClassifierDataset();
-                let datasetObj = {};
+                const json = await serializeClassifier();
+                localStorage.setItem('neural-v6-pro', json);
+            } catch(e) { console.warn("Storage cheio."); }
+        }
+
+        async function loadDataFromStorage() {
+            const json = localStorage.getItem('neural-v6-pro');
+            if(json) {
+                deserializeClassifier(json);
+                updateCount();
+            }
+        }
+
+        async function downloadData() {
+            try {
+                if (classifier.getNumClasses() === 0) return showToast("Nada para salvar.", true);
+                const json = await serializeClassifier();
                 
-                Object.keys(dataset).forEach((key) => {
-                    let data = dataset[key].dataSync();
-                    datasetObj[key] = {
-                        data: Array.from(data),
-                        shape: dataset[key].shape
-                    };
-                });
-                
-                const json = JSON.stringify(datasetObj);
-                
-                // Criação segura do blob e link
                 const blob = new Blob([json], {type: "application/json"});
                 const url = URL.createObjectURL(blob);
-                
-                // Cria elemento <a> invisível anexado ao DOM (obrigatório para iOS)
                 const a = document.createElement('a');
                 a.style.display = 'none';
                 a.href = url;
@@ -488,15 +513,8 @@
                 
                 document.body.appendChild(a);
                 a.click();
-                
-                // Cleanup
-                setTimeout(() => {
-                    document.body.removeChild(a);
-                    window.URL.revokeObjectURL(url);
-                }, 100);
-
+                setTimeout(() => { document.body.removeChild(a); window.URL.revokeObjectURL(url); }, 100);
                 showToast("Download Iniciado!");
-
             } catch(e) {
                 console.error(e);
                 showToast("Erro ao criar arquivo", true);
@@ -506,41 +524,21 @@
         function uploadData(input) {
             const file = input.files[0];
             if(!file) return;
-            
             const reader = new FileReader();
             reader.onload = (e) => {
                 try {
-                    const jsonStr = e.target.result;
-                    const datasetObj = JSON.parse(jsonStr);
-                    const dataset = {};
-                    
-                    Object.keys(datasetObj).forEach((key) => {
-                        const entry = datasetObj[key];
-                        // Compatibilidade com versões antigas (array simples) vs novas (objeto com shape)
-                        if (Array.isArray(entry)) {
-                            dataset[key] = tf.tensor(entry, [entry.length / 1024, 1024]);
-                        } else {
-                            dataset[key] = tf.tensor(entry.data, entry.shape);
-                        }
-                    });
-                    
-                    classifier.clearAllClasses();
-                    classifier.setClassifierDataset(dataset);
-                    
-                    // Salva no local storage também
+                    deserializeClassifier(e.target.result);
                     saveDataToStorage();
                     updateCount();
-                    showToast("Memória Restaurada com Sucesso!");
+                    showToast("Sucesso! Memória Restaurada.");
                     closeSettings();
                 } catch(err) {
-                    showToast("Arquivo Inválido", true);
+                    showToast("Arquivo Corrompido ou Incompatível", true);
                     console.error(err);
                 }
             };
             reader.readAsText(file);
         }
-
-        // --- AÇÕES UI ---
 
         function triggerTraining() {
             try {
@@ -570,15 +568,9 @@
         function confirmTraining() {
             const label = document.getElementById('label-input').value.trim();
             if (!label || !tempEmbedding) return;
-
             classifier.addExample(tempEmbedding, label);
-            tempEmbedding.dispose();
-            tempEmbedding = null;
-            
-            closeModal();
-            updateCount();
-            showToast("Memória Adicionada!");
-            
+            tempEmbedding.dispose(); tempEmbedding = null;
+            closeModal(); updateCount(); showToast("Memória Adicionada!");
             setTimeout(() => saveDataToStorage(), 50);
         }
 
@@ -595,36 +587,6 @@
             document.getElementById('mem-count').innerText = total;
         }
 
-        async function saveDataToStorage() {
-            try {
-                const dataset = classifier.getClassifierDataset();
-                let datasetObj = {};
-                Object.keys(dataset).forEach((key) => {
-                    let data = dataset[key].dataSync();
-                    datasetObj[key] = { data: Array.from(data), shape: dataset[key].shape };
-                });
-                localStorage.setItem('neural-v6-pro', JSON.stringify(datasetObj));
-            } catch(e) { console.warn("Storage local cheio."); }
-        }
-
-        async function loadDataFromStorage() {
-            const str = localStorage.getItem('neural-v6-pro');
-            if (str) {
-                const obj = JSON.parse(str);
-                const ds = {};
-                Object.keys(obj).forEach((key) => {
-                    const entry = obj[key];
-                    if (Array.isArray(entry)) {
-                        ds[key] = tf.tensor(entry, [entry.length / 1024, 1024]);
-                    } else {
-                        ds[key] = tf.tensor(entry.data, entry.shape);
-                    }
-                });
-                classifier.setClassifierDataset(ds);
-                updateCount();
-            }
-        }
-        
         function clearMemory() {
             classifier.clearAllClasses();
             localStorage.removeItem('neural-v6-pro');
