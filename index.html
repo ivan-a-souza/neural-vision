@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Neural Vision v7.4 - Universal Text</title>
+    <title>Neural Vision v7.5 - Blob Loader</title>
     
     <!-- TensorFlow.js -->
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
@@ -100,9 +100,8 @@
         #toast.active { opacity: 1; top: 40px; }
         #toast.error { background: #ff4444; color: white; box-shadow: 0 0 20px rgba(255, 68, 68, 0.4); }
 
-        /* DEBUG CONSOLE (Hidden by default) */
         #debug-console {
-            position: fixed; top: 0; left: 0; width: 100%; height: 40%;
+            position: fixed; top: 0; left: 0; width: 100%; height: 30%;
             background: rgba(0,0,0,0.9); color: #00ff00;
             font-family: monospace; font-size: 10px;
             padding: 10px; overflow-y: auto; z-index: 200;
@@ -115,7 +114,7 @@
 <body>
 
     <div id="debug-console">
-        <div class="text-center font-bold border-b border-green-500 mb-2">DIAGNÓSTICO</div>
+        <div class="text-center font-bold border-b border-green-500 mb-2">BLOB ENGINE LOGS</div>
         <div id="logs-content"></div>
         <button onclick="hideDebug()" class="absolute top-2 right-2 bg-red-900 px-2 text-white">X</button>
     </div>
@@ -130,11 +129,8 @@
 
     <div id="processing-screen">
         <div class="w-12 h-12 border-4 border-gray-800 border-t-green-400 rounded-full animate-spin mb-6"></div>
-        <h1 class="text-xl font-bold text-green-400">PROCESSANDO</h1>
-        <p id="proc-msg" class="text-gray-400 mt-2 text-xs">Lendo arquivo...</p>
-        <div class="w-48 h-2 bg-gray-800 mt-4 rounded-full overflow-hidden">
-            <div id="proc-bar" class="h-full bg-green-400 w-0 transition-all duration-300"></div>
-        </div>
+        <h1 class="text-xl font-bold text-green-400">IMPORTANDO</h1>
+        <p id="proc-msg" class="text-gray-400 mt-2 text-xs">Acedendo ao ficheiro...</p>
     </div>
 
     <div id="error-screen">
@@ -220,8 +216,7 @@
                 <label class="py-4 bg-gray-800 rounded-xl text-xs font-bold flex flex-col items-center gap-2 cursor-pointer hover:bg-gray-700 transition">
                     <i data-lucide="upload" width="20" class="text-green-400"></i>
                     <span>Restaurar</span>
-                    <!-- Accept genérico para garantir que o Android mostra o arquivo -->
-                    <input type="file" id="file-upload" class="hidden" accept="text/plain,.txt,.bin" onchange="uploadSafe(this)">
+                    <input type="file" id="file-upload" class="hidden" accept=".txt,text/plain" onchange="uploadBlob(this)">
                 </label>
             </div>
             
@@ -237,7 +232,6 @@
     <script>
         lucide.createIcons();
 
-        // --- LOGGER ---
         function appLog(msg, type='info') {
             const consoleDiv = document.getElementById('logs-content');
             if(consoleDiv) {
@@ -245,15 +239,14 @@
                 line.className = `log-line ${type === 'error' ? 'log-error' : ''}`;
                 line.innerText = `> ${msg}`;
                 consoleDiv.appendChild(line);
+                consoleDiv.scrollTop = consoleDiv.scrollHeight;
             }
             console.log(`[NV] ${msg}`);
         }
-        function toggleDebug(enable) {
-            document.getElementById('debug-console').style.display = enable ? 'block' : 'none';
-        }
+        function toggleDebug(enable) { document.getElementById('debug-console').style.display = enable ? 'block' : 'none'; }
         function hideDebug() { document.getElementById('debug-console').style.display = 'none'; }
 
-        // --- VARS ---
+        // --- CORE VARS ---
         const video = document.getElementById('source-video');
         const canvas = document.getElementById('main-canvas');
         const ctx = canvas.getContext('2d', { alpha: false });
@@ -261,7 +254,6 @@
         const statusDiv = document.getElementById('scan-status');
         const loader = document.getElementById('loader');
         const processingScreen = document.getElementById('processing-screen');
-        const procBar = document.getElementById('proc-bar');
         
         let models = {};
         let classifier;
@@ -288,16 +280,12 @@
                 models.ssd = ssd;
                 models.mobile = mobile;
                 classifier = knnClassifier.create();
-                
                 try { await loadDataFromStorage(); } catch(e) {}
-
                 loader.classList.add('opacity-0');
                 setTimeout(() => loader.remove(), 500);
                 isRunning = true;
                 gameLoop();
-            } catch (e) {
-                showError("Erro Init: " + e.message);
-            }
+            } catch (e) { showError("Erro Init: " + e.message); }
         }
 
         async function tryStartCamera() {
@@ -446,16 +434,14 @@
             });
         }
 
-        // --- BACKUP: TEXT/BASE64 PROTOCOL (Universal) ---
+        // --- BACKUP: FETCH-BLOB ENGINE (Solução Code 8) ---
 
-        // Helper to convert buffer to Base64 (Robust)
+        // Helper: Convert buffer to Base64
         function bufferToBase64(buffer) {
             let binary = '';
             const bytes = new Uint8Array(buffer);
             const len = bytes.byteLength;
-            for (let i = 0; i < len; i++) {
-                binary += String.fromCharCode(bytes[i]);
-            }
+            for (let i = 0; i < len; i++) binary += String.fromCharCode(bytes[i]);
             return window.btoa(binary);
         }
 
@@ -463,20 +449,16 @@
             const binary_string = window.atob(base64);
             const len = binary_string.length;
             const bytes = new Uint8Array(len);
-            for (let i = 0; i < len; i++) {
-                bytes[i] = binary_string.charCodeAt(i);
-            }
+            for (let i = 0; i < len; i++) bytes[i] = binary_string.charCodeAt(i);
             return bytes.buffer;
         }
 
         async function downloadText() {
             if (classifier.getNumClasses() === 0) return showToast("Vazio", true);
-
             try {
-                // 1. Gera o binário original
+                // 1. Serialize Dataset
                 const dataset = classifier.getClassifierDataset();
-                let manifest = {};
-                let totalElements = 0;
+                let manifest = {}; let totalElements = 0;
                 Object.keys(dataset).forEach((label) => {
                     const tensor = dataset[label];
                     manifest[label] = { shape: tensor.shape, length: tensor.size };
@@ -484,16 +466,13 @@
                 });
                 const manifestStr = JSON.stringify(manifest);
                 const manifestBytes = new TextEncoder().encode(manifestStr);
-                
                 const totalByteSize = 4 + 4 + manifestBytes.length + (totalElements * 4);
                 const buffer = new ArrayBuffer(totalByteSize);
                 const view = new DataView(buffer);
                 const uint8View = new Uint8Array(buffer);
-                
                 uint8View.set([78, 86, 73, 83], 0); 
                 view.setUint32(4, manifestBytes.length, true);
                 uint8View.set(manifestBytes, 8);
-                
                 let currentByteOffset = 8 + manifestBytes.length;
                 Object.keys(dataset).forEach((label) => {
                     const data = dataset[label].dataSync();
@@ -503,122 +482,106 @@
                     }
                 });
 
-                // 2. Converte para BASE64 e salva como .txt
-                // O Android adora .txt e lê sem problemas
+                // 2. Base64 + Blob
                 const base64String = bufferToBase64(buffer);
                 const finalBlob = new Blob([base64String], {type: "text/plain"});
-                
                 const url = URL.createObjectURL(finalBlob);
+                
+                // 3. Download Link
                 const a = document.createElement('a'); 
                 a.style.display = 'none'; 
                 a.href = url;
                 a.download = `neural_memory_${new Date().getTime()}.txt`;
-                
                 document.body.appendChild(a); 
                 a.click();
-                
                 setTimeout(() => { document.body.removeChild(a); window.URL.revokeObjectURL(url); }, 100);
                 showToast("Arquivo .txt gerado!");
-
             } catch(e) { appLog(e.message, 'error'); showToast("Erro Backup", true); }
         }
 
-        function uploadSafe(input) {
+        // 4. UPLOAD via FETCH (Correção do Error 8)
+        async function uploadBlob(input) {
             const file = input.files[0];
             if(!file) return;
             
-            // UI Update
-            input.value = ''; // Reset
+            // Reset input
+            input.value = '';
+
             document.getElementById('processing-screen').style.display = 'flex';
-            document.getElementById('proc-msg').innerText = "Verificando ficheiro...";
-            appLog(`Iniciando leitura segura de: ${file.name}`);
+            document.getElementById('proc-msg').innerText = "Carregando via Rede Interna...";
+            appLog("Iniciando Blob Fetch...");
 
-            // Chunked Reader para ficheiros grandes (Safety)
-            const CHUNK_SIZE = 1024 * 1024; // 1MB chunks
-            const fileSize = file.size;
-            let offset = 0;
-            let content = '';
-
-            const reader = new FileReader();
-
-            reader.onload = (e) => {
-                content += e.target.result;
-                offset += CHUNK_SIZE;
+            try {
+                // Truque: Criar URL temporária e fazer fetch (bypass FileReader)
+                const objectUrl = URL.createObjectURL(file);
+                const response = await fetch(objectUrl);
                 
-                // Update Progress
-                const percent = Math.min(100, (offset / fileSize) * 100);
-                procBar.style.width = `${percent}%`;
+                if (!response.ok) throw new Error("Falha na rede interna do navegador");
+                
+                const textData = await response.text();
+                appLog("Fetch concluído. Iniciando parsing...");
+                
+                // Libera URL
+                URL.revokeObjectURL(objectUrl);
 
-                if (offset < fileSize) {
-                    readNextChunk();
-                } else {
-                    finishUpload(content);
-                }
-            };
+                // Processa Texto (Base64)
+                processTextData(textData);
 
-            reader.onerror = (e) => {
+            } catch(err) {
                 document.getElementById('processing-screen').style.display = 'none';
-                alert("Erro de Leitura. Código: " + reader.error.code);
-            };
-
-            function readNextChunk() {
-                const slice = file.slice(offset, offset + CHUNK_SIZE);
-                reader.readAsText(slice); // Lê sempre como texto para segurança
+                appLog(`ERRO FETCH: ${err.message}`, 'error');
+                
+                // Mensagem específica para erro Code 8 / NotReadable
+                let errorMsg = "Erro desconhecido.";
+                if(err.message.includes("Failed to fetch") || err.name === "TypeError") {
+                    errorMsg = "Bloqueio de segurança do Android detectado.\n\nSOLUÇÃO: Mova o arquivo para a pasta 'Downloads' ou 'Documentos' e tente novamente.";
+                } else {
+                    errorMsg = err.message;
+                }
+                alert(errorMsg);
             }
-
-            // Iniciar leitura
-            readNextChunk();
         }
 
-        function finishUpload(textData) {
-            document.getElementById('proc-msg').innerText = "Descodificando...";
-            appLog("Leitura concluída. Iniciando parsing...");
+        function processTextData(textData) {
+            try {
+                const cleanBase64 = textData.trim();
+                const buffer = base64ToBuffer(cleanBase64);
+                const view = new DataView(buffer);
+                const uint8View = new Uint8Array(buffer);
 
-            // Pequeno delay para a UI atualizar
-            setTimeout(() => {
-                try {
-                    // 1. Limpeza (remove espaços ou quebras de linha acidentais)
-                    const cleanBase64 = textData.trim();
-                    
-                    // 2. Converte Base64 para Buffer
-                    const buffer = base64ToBuffer(cleanBase64);
-                    const view = new DataView(buffer);
-                    const uint8View = new Uint8Array(buffer);
+                if(uint8View[0] !== 78 || uint8View[1] !== 86) throw new Error("Assinatura Inválida");
 
-                    // 3. Validação Binária
-                    if(uint8View[0] !== 78 || uint8View[1] !== 86) throw new Error("Assinatura Inválida");
+                const manifestLen = view.getUint32(4, true);
+                const manifestBytes = uint8View.slice(8, 8 + manifestLen);
+                const manifest = JSON.parse(new TextDecoder().decode(manifestBytes));
+                
+                let currentByteOffset = 8 + manifestLen;
+                const newDataset = {};
 
-                    const manifestLen = view.getUint32(4, true);
-                    const manifestBytes = uint8View.slice(8, 8 + manifestLen);
-                    const manifest = JSON.parse(new TextDecoder().decode(manifestBytes));
-                    
-                    let currentByteOffset = 8 + manifestLen;
-                    const newDataset = {};
+                Object.keys(manifest).forEach(label => {
+                    const info = manifest[label];
+                    const floats = new Float32Array(info.length);
+                    for(let i=0; i<info.length; i++) {
+                        floats[i] = view.getFloat32(currentByteOffset, true);
+                        currentByteOffset += 4;
+                    }
+                    newDataset[label] = tf.tensor(floats, info.shape);
+                });
 
-                    Object.keys(manifest).forEach(label => {
-                        const info = manifest[label];
-                        const floats = new Float32Array(info.length);
-                        for(let i=0; i<info.length; i++) {
-                            floats[i] = view.getFloat32(currentByteOffset, true);
-                            currentByteOffset += 4;
-                        }
-                        newDataset[label] = tf.tensor(floats, info.shape);
-                    });
+                classifier.clearAllClasses();
+                classifier.setClassifierDataset(newDataset);
+                saveDataToStorage(); updateCount();
+                
+                document.getElementById('processing-screen').style.display = 'none';
+                showToast("Sucesso Total!");
+                closeSettings();
+                appLog("Sucesso!", 'success');
 
-                    classifier.clearAllClasses();
-                    classifier.setClassifierDataset(newDataset);
-                    saveDataToStorage(); updateCount();
-                    
-                    document.getElementById('processing-screen').style.display = 'none';
-                    showToast("Sucesso Total!");
-                    closeSettings();
-
-                } catch(err) {
-                    document.getElementById('processing-screen').style.display = 'none';
-                    appLog(err.message, 'error');
-                    alert("Ficheiro inválido ou corrompido.\nCertifique-se que está a usar o ficheiro .txt gerado por esta versão.");
-                }
-            }, 100);
+            } catch(err) {
+                document.getElementById('processing-screen').style.display = 'none';
+                appLog(err.message, 'error');
+                alert("Arquivo inválido. Use um backup .txt desta versão.");
+            }
         }
 
         async function saveDataToStorage() {
