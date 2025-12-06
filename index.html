@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Neural Vision v6.7 - Universal</title>
+    <title>Neural Vision v6.8 - Cross Device</title>
     
     <!-- TensorFlow.js -->
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
@@ -64,11 +64,12 @@
             box-shadow: 0 0 15px rgba(0, 243, 255, 0.3);
         }
 
-        #loader, #error-screen, #start-screen {
+        /* Loaders & Screens */
+        #loader, #error-screen, #start-screen, #processing-screen {
             position: fixed; inset: 0; z-index: 100; background: #000;
             display: flex; flex-direction: column; align-items: center; justify-content: center;
         }
-        #error-screen, #start-screen { display: none; z-index: 110; background: rgba(0,0,0,0.95); }
+        #error-screen, #start-screen, #processing-screen { display: none; z-index: 110; background: rgba(0,0,0,0.95); }
 
         .modal-wrap {
             position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 50;
@@ -111,6 +112,13 @@
         <p id="loader-text" class="text-gray-500 mt-2 font-mono text-[10px] uppercase">Inicializando...</p>
     </div>
 
+    <!-- Processing Backup -->
+    <div id="processing-screen">
+        <div class="w-12 h-12 border-4 border-gray-800 border-t-green-400 rounded-full animate-spin mb-6"></div>
+        <h1 class="text-xl font-bold text-green-400">A PROCESSAR</h1>
+        <p class="text-gray-400 mt-2 text-xs">Lendo arquivo de memória...</p>
+    </div>
+
     <!-- Error -->
     <div id="error-screen">
         <i data-lucide="alert-triangle" class="w-12 h-12 text-red-500 mb-4"></i>
@@ -139,7 +147,7 @@
             </div>
             <div class="flex gap-2">
                 <div class="glass-panel flex flex-col justify-center px-3 mr-2">
-                    <span class="text-[9px] text-gray-400 uppercase font-bold">Memória</span>
+                    <span class="text-[9px] text-gray-400 uppercase font-bold">Exemplos</span>
                     <span id="mem-count" class="text-lg font-mono text-cyan-400 font-bold leading-none">0</span>
                 </div>
                 <button onclick="switchCamera()" class="btn-round"><i data-lucide="switch-camera" width="20"></i></button>
@@ -192,7 +200,8 @@
                 <label class="py-4 bg-gray-800 rounded-xl text-xs font-bold flex flex-col items-center gap-2 cursor-pointer hover:bg-gray-700 transition">
                     <i data-lucide="upload" width="20" class="text-green-400"></i>
                     <span>Restaurar</span>
-                    <input type="file" class="hidden" onchange="uploadData(this)">
+                    <!-- CORREÇÃO: Accept explícito para Android -->
+                    <input type="file" class="hidden" accept=".json,application/json" onchange="uploadData(this)">
                 </label>
             </div>
             <button onclick="clearMemory()" class="w-full py-3 text-red-400 border border-red-900/50 rounded-xl hover:bg-red-900/20 font-bold text-xs mb-3">
@@ -213,6 +222,7 @@
         const neuralEye = document.getElementById('neural-eye').getContext('2d');
         const statusDiv = document.getElementById('scan-status');
         const loader = document.getElementById('loader');
+        const processingScreen = document.getElementById('processing-screen');
         
         let models = {};
         let classifier;
@@ -229,9 +239,11 @@
             'book': 'Livro', 'remote': 'Comando', 'tv': 'Televisão', 'potted plant': 'Planta'
         };
 
+        // --- INICIALIZAÇÃO ---
         async function init() {
             try {
                 await tryStartCamera();
+
                 document.getElementById('loader-text').innerText = "Carregando Cérebro...";
                 
                 const [ssd, mobile] = await Promise.all([
@@ -252,6 +264,7 @@
                 
                 isRunning = true;
                 gameLoop();
+
             } catch (e) {
                 console.error(e);
                 showError("Erro: " + e.message);
@@ -286,6 +299,7 @@
 
         function showError(msg) {
             loader.style.display = 'none';
+            processingScreen.style.display = 'none';
             document.getElementById('error-screen').style.display = 'flex';
             document.getElementById('error-msg').innerText = msg;
         }
@@ -438,15 +452,11 @@
             });
         }
 
-        // --- BACKUP & RESTORE UNIVERSAL ---
-
         async function serializeClassifier() {
             const dataset = classifier.getClassifierDataset();
             let datasetObj = {};
-            
             Object.keys(dataset).forEach((key) => {
-                let data = dataset[key].dataSync(); 
-                // Convertendo TypedArray para Array comum para garantir compatibilidade
+                let data = dataset[key].dataSync();
                 datasetObj[key] = {
                     data: Array.from(data),
                     shape: dataset[key].shape 
@@ -461,25 +471,15 @@
             
             Object.keys(datasetObj).forEach((key) => {
                 const entry = datasetObj[key];
-                
-                // Sanitização Universal
                 let cleanData = entry.data;
-                
-                // Alguns browsers salvam array como objeto {0: x, 1: y...}. Corrigimos aqui.
-                if (!Array.isArray(cleanData)) {
-                     // Tenta converter objeto de volta para array se possível
-                     cleanData = Object.values(cleanData);
-                }
+                if (!Array.isArray(cleanData)) cleanData = Object.values(cleanData);
 
-                // Legado (versões antigas que salvavam só o array sem shape)
                 if (Array.isArray(entry)) {
                      dataset[key] = tf.tensor(entry, [entry.length / 1024, 1024], 'float32');
                 } else {
-                    // Novo formato: Forçar float32
                     dataset[key] = tf.tensor(cleanData, entry.shape, 'float32');
                 }
             });
-            
             classifier.clearAllClasses();
             classifier.setClassifierDataset(dataset);
         }
@@ -521,22 +521,50 @@
             }
         }
 
+        // --- UPLOAD CORRIGIDO PARA XIAOMI ---
         function uploadData(input) {
             const file = input.files[0];
             if(!file) return;
+
+            // Feedback visual imediato
+            processingScreen.style.display = 'flex';
+            
             const reader = new FileReader();
+            
             reader.onload = (e) => {
                 try {
-                    deserializeClassifier(e.target.result);
+                    const jsonStr = e.target.result;
+                    
+                    // Validação básica se é JSON válido
+                    if (!jsonStr || jsonStr.trim() === "") throw new Error("Arquivo vazio");
+                    
+                    deserializeClassifier(jsonStr);
                     saveDataToStorage();
                     updateCount();
+                    
+                    processingScreen.style.display = 'none';
                     showToast("Sucesso! Memória Restaurada.");
                     closeSettings();
                 } catch(err) {
-                    showToast("Arquivo Corrompido ou Incompatível", true);
-                    console.error(err);
+                    processingScreen.style.display = 'none';
+                    showToast("Arquivo Inválido", true);
+                    alert("Erro ao ler backup: " + err.message);
                 }
             };
+            
+            reader.onerror = () => {
+                processingScreen.style.display = 'none';
+                showToast("Erro ao ler arquivo", true);
+            };
+
+            // Timeout de segurança caso o navegador trave
+            setTimeout(() => {
+                if(processingScreen.style.display === 'flex') {
+                    processingScreen.style.display = 'none';
+                    showToast("Tempo limite excedido", true);
+                }
+            }, 10000);
+
             reader.readAsText(file);
         }
 
@@ -603,3 +631,5 @@
     </script>
 </body>
 </html>
+
+
