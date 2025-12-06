@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Neural Vision v7.2 - File Safe</title>
+    <title>Neural Vision v7.3 - Titanium</title>
     
     <!-- TensorFlow.js -->
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
@@ -64,6 +64,7 @@
             box-shadow: 0 0 15px rgba(0, 243, 255, 0.3);
         }
 
+        /* Screens */
         #loader, #error-screen, #start-screen, #processing-screen {
             position: fixed; inset: 0; z-index: 100; background: #000;
             display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -108,12 +109,14 @@
         }
         .log-line { margin-bottom: 2px; border-bottom: 1px solid #333; }
         .log-error { color: #ff4444; font-weight: bold; }
+        .log-warn { color: #ffff00; }
+        .log-success { color: #00f3ff; }
     </style>
 </head>
 <body>
 
     <div id="debug-console">
-        <div class="text-center font-bold border-b border-green-500 mb-2">LOGS</div>
+        <div class="text-center font-bold border-b border-green-500 mb-2">SISTEMA</div>
         <div id="logs-content"></div>
         <button onclick="hideDebug()" class="absolute top-2 right-2 bg-red-900 px-2 text-white">X</button>
     </div>
@@ -200,14 +203,10 @@
         <div class="modal-body">
             <h3 class="text-lg font-bold mb-4">Dados</h3>
             
-            <div class="mb-3 bg-blue-900/30 p-2 rounded text-[10px] text-blue-200 border border-blue-800">
-                Dica: Se a restauração falhar, tente selecionar o arquivo pelo <b>Gerenciador de Arquivos</b> e não pelos "Recentes".
-            </div>
-
             <div class="mb-3">
                 <label class="flex items-center gap-2 text-xs text-gray-400">
                     <input type="checkbox" onchange="toggleDebug(this.checked)" class="accent-cyan-400">
-                    Mostrar Logs de Erro
+                    Mostrar Logs
                 </label>
             </div>
 
@@ -219,8 +218,7 @@
                 <label class="py-4 bg-gray-800 rounded-xl text-xs font-bold flex flex-col items-center gap-2 cursor-pointer hover:bg-gray-700 transition">
                     <i data-lucide="upload" width="20" class="text-green-400"></i>
                     <span>Restaurar</span>
-                    <!-- Accept mais amplo e genérico para Android não reclamar -->
-                    <input type="file" id="file-upload" class="hidden" accept="*/*" onchange="uploadBinary(this)">
+                    <input type="file" id="file-upload" class="hidden" accept=".bin,application/octet-stream" onchange="uploadSmart(this)">
                 </label>
             </div>
             
@@ -241,7 +239,7 @@
             const consoleDiv = document.getElementById('logs-content');
             if(consoleDiv) {
                 const line = document.createElement('div');
-                line.className = `log-line ${type === 'error' ? 'log-error' : ''}`;
+                line.className = `log-line ${type === 'error' ? 'log-error' : (type === 'warn' ? 'log-warn' : '')}`;
                 line.innerText = `> ${msg}`;
                 consoleDiv.appendChild(line);
                 consoleDiv.scrollTop = consoleDiv.scrollHeight;
@@ -445,7 +443,7 @@
             });
         }
 
-        // --- BINARY DOWNLOAD ---
+        // --- BACKUP ---
         async function downloadBinary() {
             if (classifier.getNumClasses() === 0) return showToast("Vazio", true);
             try {
@@ -476,7 +474,6 @@
                 const blob = new Blob([buffer], {type: "application/octet-stream"});
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a'); a.style.display = 'none'; a.href = url;
-                // Mudar para .bin para compatibilidade
                 a.download = `neural_mem_${new Date().getTime()}.bin`;
                 document.body.appendChild(a); a.click();
                 setTimeout(() => { document.body.removeChild(a); window.URL.revokeObjectURL(url); }, 100);
@@ -484,69 +481,103 @@
             } catch(e) { appLog(e.message, 'error'); showToast("Erro Backup", true); }
         }
 
-        // --- UPLOAD SAFE ---
-        function uploadBinary(input) {
+        // --- UPLOAD INTELIGENTE (DUAL ENGINE) ---
+        function uploadSmart(input) {
             const file = input.files[0];
             if(!file) return;
             
-            // Limpa input para permitir selecionar o mesmo arquivo se falhar
-            input.value = '';
-
+            // Ativa o display de debug
+            document.getElementById('debug-console').style.display = 'block';
             document.getElementById('processing-screen').style.display = 'flex';
-            document.getElementById('proc-msg').innerText = "Lendo Bytes...";
-            appLog("Iniciando leitura de arquivo...");
+            document.getElementById('proc-msg').innerText = "Tentando Ler Ficheiro...";
+            appLog(`Iniciando leitura: ${file.name} (${file.size} bytes)`);
 
+            // TENTATIVA 1: ArrayBuffer direto
             const reader = new FileReader();
+            
             reader.onload = (e) => {
-                try {
-                    const buffer = e.target.result;
-                    const view = new DataView(buffer);
-                    const uint8View = new Uint8Array(buffer);
-
-                    if(uint8View[0] !== 78 || uint8View[1] !== 86) throw new Error("Formato Inválido (Magic Bytes)");
-                    
-                    const manifestLen = view.getUint32(4, true);
-                    const manifestBytes = uint8View.slice(8, 8 + manifestLen);
-                    const manifest = JSON.parse(new TextDecoder().decode(manifestBytes));
-                    
-                    let currentByteOffset = 8 + manifestLen;
-                    const newDataset = {};
-
-                    Object.keys(manifest).forEach(label => {
-                        const info = manifest[label];
-                        const floats = new Float32Array(info.length);
-                        for(let i=0; i<info.length; i++) {
-                            floats[i] = view.getFloat32(currentByteOffset, true);
-                            currentByteOffset += 4;
-                        }
-                        newDataset[label] = tf.tensor(floats, info.shape);
-                    });
-
-                    classifier.clearAllClasses();
-                    classifier.setClassifierDataset(newDataset);
-                    saveDataToStorage(); updateCount();
-                    
-                    document.getElementById('processing-screen').style.display = 'none';
-                    showToast("Sucesso!");
-                    closeSettings();
-                    appLog("Sucesso na importação.");
-
-                } catch(err) {
-                    document.getElementById('processing-screen').style.display = 'none';
-                    if(err.name === 'NotFoundError') {
-                        alert("ERRO DE PERMISSÃO:\nO sistema não conseguiu ler o arquivo.\n\nSOLUÇÃO: Selecione o arquivo através da pasta 'Downloads' ou 'Gerenciador de Arquivos' (evite 'Recentes').");
-                    } else {
-                        alert("Erro: " + err.message);
-                    }
-                    appLog(err.message, 'error');
-                }
+                appLog("Leitura Direta OK. Processando...");
+                processArrayBuffer(e.target.result);
             };
+
             reader.onerror = (e) => {
-                document.getElementById('processing-screen').style.display = 'none';
-                alert("Erro de Leitura. Tente mover o arquivo para a memória interna.");
-                appLog("Reader Error", 'error');
+                appLog(`Erro de Leitura Direta: ${reader.error}`, 'warn');
+                appLog("Tentando modo Base64 (Compatibilidade Android)...");
+                
+                // TENTATIVA 2: Base64 fallback (para Xiaomi/Samsung Files)
+                const reader2 = new FileReader();
+                reader2.onload = (e2) => {
+                    appLog("Leitura Base64 OK. Convertendo...");
+                    try {
+                        const base64 = e2.target.result.split(',')[1];
+                        const binaryString = atob(base64);
+                        const len = binaryString.length;
+                        const bytes = new Uint8Array(len);
+                        for (let i = 0; i < len; i++) {
+                            bytes[i] = binaryString.charCodeAt(i);
+                        }
+                        processArrayBuffer(bytes.buffer);
+                    } catch(errConv) {
+                        failUpload("Falha na conversão Base64: " + errConv.message);
+                    }
+                };
+                reader2.onerror = (e2) => {
+                    failUpload("ERRO FATAL: Falha em todos os métodos de leitura.");
+                };
+                reader2.readAsDataURL(file);
             };
-            reader.readAsArrayBuffer(file);
+
+            // Inicia tentativa 1
+            try {
+                reader.readAsArrayBuffer(file);
+            } catch(e) {
+                appLog("Exceção síncrona na leitura, tentando fallback...", 'warn');
+                // Se falhar sincronamente (raro), tenta o reader2
+            }
+        }
+
+        function processArrayBuffer(buffer) {
+            try {
+                const view = new DataView(buffer);
+                const uint8View = new Uint8Array(buffer);
+
+                if(uint8View[0] !== 78 || uint8View[1] !== 86) throw new Error("Assinatura Inválida (Magic Bytes)");
+                
+                const manifestLen = view.getUint32(4, true);
+                const manifestBytes = uint8View.slice(8, 8 + manifestLen);
+                const manifest = JSON.parse(new TextDecoder().decode(manifestBytes));
+                
+                let currentByteOffset = 8 + manifestLen;
+                const newDataset = {};
+
+                Object.keys(manifest).forEach(label => {
+                    const info = manifest[label];
+                    const floats = new Float32Array(info.length);
+                    for(let i=0; i<info.length; i++) {
+                        floats[i] = view.getFloat32(currentByteOffset, true);
+                        currentByteOffset += 4;
+                    }
+                    newDataset[label] = tf.tensor(floats, info.shape);
+                });
+
+                classifier.clearAllClasses();
+                classifier.setClassifierDataset(newDataset);
+                saveDataToStorage(); updateCount();
+                
+                document.getElementById('processing-screen').style.display = 'none';
+                showToast("Sucesso Total!");
+                appLog("Sucesso! Memória restaurada.", 'success');
+                setTimeout(() => { hideDebug(); closeSettings(); }, 3000);
+
+            } catch(err) {
+                failUpload(err.message);
+            }
+        }
+
+        function failUpload(msg) {
+            document.getElementById('processing-screen').style.display = 'none';
+            appLog(msg, 'error');
+            alert("ERRO DE IMPORTAÇÃO:\n" + msg + "\n\nDICA: Mova o ficheiro para a pasta 'Downloads' interna e tente novamente.");
         }
 
         async function saveDataToStorage() {
