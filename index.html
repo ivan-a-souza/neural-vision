@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Neural Vision v7.1 - Debugger</title>
+    <title>Neural Vision v7.2 - File Safe</title>
     
     <!-- TensorFlow.js -->
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
@@ -64,12 +64,11 @@
             box-shadow: 0 0 15px rgba(0, 243, 255, 0.3);
         }
 
-        /* Screens */
-        #loader, #error-screen, #start-screen {
+        #loader, #error-screen, #start-screen, #processing-screen {
             position: fixed; inset: 0; z-index: 100; background: #000;
             display: flex; flex-direction: column; align-items: center; justify-content: center;
         }
-        #error-screen, #start-screen { display: none; z-index: 110; background: rgba(0,0,0,0.95); }
+        #error-screen, #start-screen, #processing-screen { display: none; z-index: 110; background: rgba(0,0,0,0.95); }
 
         .modal-wrap {
             position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 50;
@@ -100,9 +99,8 @@
         #toast.active { opacity: 1; top: 40px; }
         #toast.error { background: #ff4444; color: white; box-shadow: 0 0 20px rgba(255, 68, 68, 0.4); }
 
-        /* DEBUG CONSOLE */
         #debug-console {
-            position: fixed; top: 0; left: 0; width: 100%; height: 50%;
+            position: fixed; top: 0; left: 0; width: 100%; height: 40%;
             background: rgba(0,0,0,0.9); color: #00ff00;
             font-family: monospace; font-size: 10px;
             padding: 10px; overflow-y: auto; z-index: 200;
@@ -110,46 +108,46 @@
         }
         .log-line { margin-bottom: 2px; border-bottom: 1px solid #333; }
         .log-error { color: #ff4444; font-weight: bold; }
-        .log-success { color: #00f3ff; }
     </style>
 </head>
 <body>
 
     <div id="debug-console">
-        <div class="text-center font-bold border-b border-green-500 mb-2">--- MODO DEPURAÇÃO ---</div>
+        <div class="text-center font-bold border-b border-green-500 mb-2">LOGS</div>
         <div id="logs-content"></div>
         <button onclick="hideDebug()" class="absolute top-2 right-2 bg-red-900 px-2 text-white">X</button>
     </div>
 
     <div id="toast">Notificação</div>
 
-    <!-- Loading -->
     <div id="loader">
         <div class="w-12 h-12 border-4 border-gray-800 border-t-cyan-400 rounded-full animate-spin mb-6"></div>
         <h1 class="text-xl font-bold text-white tracking-widest">NEURAL<span class="text-cyan-400">VISION</span></h1>
         <p id="loader-text" class="text-gray-500 mt-2 font-mono text-[10px] uppercase">Inicializando...</p>
     </div>
 
-    <!-- Error -->
+    <div id="processing-screen">
+        <div class="w-12 h-12 border-4 border-gray-800 border-t-green-400 rounded-full animate-spin mb-6"></div>
+        <h1 class="text-xl font-bold text-green-400">PROCESSANDO</h1>
+        <p id="proc-msg" class="text-gray-400 mt-2 text-xs">Lendo arquivo...</p>
+    </div>
+
     <div id="error-screen">
         <i data-lucide="alert-triangle" class="w-12 h-12 text-red-500 mb-4"></i>
         <p id="error-msg" class="text-gray-300 mb-6 text-center px-4">Erro.</p>
         <button onclick="location.reload()" class="px-6 py-2 bg-gray-800 rounded-full font-bold text-sm">Reiniciar</button>
     </div>
 
-    <!-- Manual Start -->
     <div id="start-screen">
         <button onclick="startCameraManual()" class="w-20 h-20 rounded-full bg-cyan-500 text-black flex items-center justify-center shadow-[0_0_30px_rgba(6,182,212,0.5)] animate-pulse">
             <i data-lucide="power" class="w-8 h-8"></i>
         </button>
-        <p class="mt-4 text-cyan-400 font-bold text-sm">Iniciar Câmara</p>
+        <p class="mt-4 text-cyan-400 font-bold text-sm">Iniciar</p>
     </div>
 
-    <!-- Core -->
     <video id="source-video" autoplay playsinline muted></video>
     <canvas id="main-canvas"></canvas>
 
-    <!-- Interface AR -->
     <div class="ui-layer p-4">
         <div class="flex justify-between items-start pointer-events-auto">
             <div class="flex flex-col gap-1">
@@ -178,7 +176,6 @@
         </div>
     </div>
 
-    <!-- Modal Treino -->
     <div id="train-modal" class="modal-wrap">
         <div class="modal-body">
             <div class="flex justify-between items-center mb-4">
@@ -199,32 +196,36 @@
         </div>
     </div>
 
-    <!-- Modal Settings -->
     <div id="settings-modal" class="modal-wrap">
         <div class="modal-body">
-            <h3 class="text-lg font-bold mb-4">Avançado</h3>
+            <h3 class="text-lg font-bold mb-4">Dados</h3>
             
-            <div class="mb-4 bg-gray-900 p-3 rounded-xl border border-gray-700">
-                <label class="flex items-center gap-3 text-sm">
-                    <input type="checkbox" id="debug-check" onchange="toggleDebug(this.checked)" class="w-5 h-5 accent-cyan-400">
-                    Ativar Modo Depuração (Logs)
+            <div class="mb-3 bg-blue-900/30 p-2 rounded text-[10px] text-blue-200 border border-blue-800">
+                Dica: Se a restauração falhar, tente selecionar o arquivo pelo <b>Gerenciador de Arquivos</b> e não pelos "Recentes".
+            </div>
+
+            <div class="mb-3">
+                <label class="flex items-center gap-2 text-xs text-gray-400">
+                    <input type="checkbox" onchange="toggleDebug(this.checked)" class="accent-cyan-400">
+                    Mostrar Logs de Erro
                 </label>
             </div>
 
             <div class="grid grid-cols-2 gap-3 mb-4">
                 <button onclick="downloadBinary()" class="py-4 bg-gray-800 rounded-xl text-xs font-bold flex flex-col items-center gap-2 hover:bg-gray-700 transition">
                     <i data-lucide="download" width="20" class="text-cyan-400"></i>
-                    <span>Baixar (.nvis)</span>
+                    <span>Baixar (.bin)</span>
                 </button>
                 <label class="py-4 bg-gray-800 rounded-xl text-xs font-bold flex flex-col items-center gap-2 cursor-pointer hover:bg-gray-700 transition">
                     <i data-lucide="upload" width="20" class="text-green-400"></i>
                     <span>Restaurar</span>
-                    <input type="file" class="hidden" accept=".nvis,.bin" onchange="uploadBinary(this)">
+                    <!-- Accept mais amplo e genérico para Android não reclamar -->
+                    <input type="file" id="file-upload" class="hidden" accept="*/*" onchange="uploadBinary(this)">
                 </label>
             </div>
             
             <button onclick="clearMemory()" class="w-full py-3 text-red-400 border border-red-900/50 rounded-xl hover:bg-red-900/20 font-bold text-xs mb-3">
-                Apagar Tudo
+                Apagar Toda Memória
             </button>
              <button onclick="closeSettings()" class="w-full py-3 bg-gray-800 rounded-xl font-bold text-xs">
                 Fechar
@@ -235,47 +236,36 @@
     <script>
         lucide.createIcons();
 
-        // --- LOGGER SYSTEM ---
+        // --- LOGGER ---
         function appLog(msg, type='info') {
             const consoleDiv = document.getElementById('logs-content');
-            const time = new Date().toLocaleTimeString().split(' ')[0];
-            const colorClass = type === 'error' ? 'log-error' : (type === 'success' ? 'log-success' : '');
-            
-            const line = document.createElement('div');
-            line.className = `log-line ${colorClass}`;
-            line.innerText = `[${time}] ${msg}`;
-            
-            consoleDiv.appendChild(line);
-            consoleDiv.scrollTop = consoleDiv.scrollHeight;
-            
-            console.log(`[NV] ${msg}`); // Also log to real console
+            if(consoleDiv) {
+                const line = document.createElement('div');
+                line.className = `log-line ${type === 'error' ? 'log-error' : ''}`;
+                line.innerText = `> ${msg}`;
+                consoleDiv.appendChild(line);
+                consoleDiv.scrollTop = consoleDiv.scrollHeight;
+            }
+            console.log(`[NV] ${msg}`);
         }
-
         function toggleDebug(enable) {
-            const d = document.getElementById('debug-console');
-            d.style.display = enable ? 'block' : 'none';
-            appLog(enable ? "Depuração ativada" : "Depuração desativada");
+            document.getElementById('debug-console').style.display = enable ? 'block' : 'none';
         }
         function hideDebug() { document.getElementById('debug-console').style.display = 'none'; }
 
-        // --- GLOBAL ERROR CATCHER ---
-        window.onerror = function(message, source, lineno, colno, error) {
-            appLog(`CRASH: ${message}`, 'error');
-            document.getElementById('debug-console').style.display = 'block'; // Auto show on crash
-        };
-
+        // --- VARS ---
         const video = document.getElementById('source-video');
         const canvas = document.getElementById('main-canvas');
         const ctx = canvas.getContext('2d', { alpha: false });
         const neuralEye = document.getElementById('neural-eye').getContext('2d');
         const statusDiv = document.getElementById('scan-status');
         const loader = document.getElementById('loader');
+        const processingScreen = document.getElementById('processing-screen');
         
         let models = {};
         let classifier;
         let isRunning = false;
         let facingMode = 'environment';
-        
         let centerObject = { label: "...", isKnown: false, source: 'none' }; 
         let detectedBoxes = [];
         let tempEmbedding = null;
@@ -287,39 +277,25 @@
         };
 
         async function init() {
-            appLog("Iniciando App...");
             try {
                 await tryStartCamera();
-                appLog("Câmara OK");
-
                 document.getElementById('loader-text').innerText = "Carregando Cérebro...";
-                
-                appLog("Carregando Modelos TFJS...");
                 const [ssd, mobile] = await Promise.all([
                     cocoSsd.load({ base: 'lite_mobilenet_v2' }), 
                     mobilenet.load()
                 ]);
                 models.ssd = ssd;
                 models.mobile = mobile;
-                appLog("Modelos Carregados");
-                
                 classifier = knnClassifier.create();
                 
-                try {
-                    await loadDataFromStorage();
-                    appLog("Memória local carregada");
-                } catch(e) { appLog("Sem memória local"); }
+                try { await loadDataFromStorage(); } catch(e) {}
 
                 loader.classList.add('opacity-0');
                 setTimeout(() => loader.remove(), 500);
-                
                 isRunning = true;
                 gameLoop();
-                appLog("Loop Gráfico iniciado");
-
             } catch (e) {
-                appLog(`ERRO INIT: ${e.message}`, 'error');
-                showError("Erro: " + e.message);
+                showError("Erro Init: " + e.message);
             }
         }
 
@@ -338,9 +314,7 @@
                         });
                     };
                 });
-            } catch (err) {
-                throw err;
-            }
+            } catch (err) { throw err; }
         }
 
         function startCameraManual() {
@@ -350,6 +324,7 @@
 
         function showError(msg) {
             loader.style.display = 'none';
+            processingScreen.style.display = 'none';
             document.getElementById('error-screen').style.display = 'flex';
             document.getElementById('error-msg').innerText = msg;
         }
@@ -362,22 +337,18 @@
 
         async function gameLoop() {
             if (!isRunning) return;
-
             if (canvas.width !== window.innerWidth || canvas.height !== window.innerHeight) {
                 canvas.width = window.innerWidth;
                 canvas.height = window.innerHeight;
             }
-
             const screenRatio = canvas.width / canvas.height;
             const videoRatio = (video.videoWidth || 1280) / (video.videoHeight || 720);
             let drawW, drawH, startX, startY;
-
             if (screenRatio > videoRatio) {
                 drawW = canvas.width; drawH = drawW / videoRatio; startX = 0; startY = (canvas.height - drawH) / 2;
             } else {
                 drawH = canvas.height; drawW = drawH * videoRatio; startX = (canvas.width - drawW) / 2; startY = 0;
             }
-
             if (video.readyState >= 2) {
                 ctx.drawImage(video, startX, startY, drawW, drawH);
                 try {
@@ -398,42 +369,27 @@
         }
 
         async function analyzeCenter(offX, offY, scale) {
-            const size = 250; 
-            const cx = canvas.width / 2;
-            const cy = canvas.height / 2;
-            let label = null;
-            let isKnown = false;
-            let source = 'none';
-
+            const size = 250; const cx = canvas.width / 2; const cy = canvas.height / 2;
+            let label = null; let isKnown = false; let source = 'none';
             const exampleCounts = classifier.getClassExampleCount();
             const totalExamples = Object.values(exampleCounts).reduce((a, b) => a + b, 0);
             
             if (totalExamples > 0) {
                 const embedding = tf.tidy(() => {
-                    const vidCX = (cx - offX) / scale;
-                    const vidCY = (cy - offY) / scale;
-                    const vidSize = size / scale;
-                    const temp = document.createElement('canvas');
-                    temp.width = 224; temp.height = 224;
+                    const vidCX = (cx - offX) / scale; const vidCY = (cy - offY) / scale; const vidSize = size / scale;
+                    const temp = document.createElement('canvas'); temp.width = 224; temp.height = 224;
                     const tCtx = temp.getContext('2d');
                     tCtx.drawImage(video, vidCX - vidSize/2, vidCY - vidSize/2, vidSize, vidSize, 0, 0, 224, 224);
                     neuralEye.drawImage(temp, 0, 0, 224, 224);
                     return models.mobile.infer(tf.browser.fromPixels(temp), true);
                 });
-
                 try {
                     const kVal = Math.max(1, Math.min(3, totalExamples));
                     const res = await classifier.predictClass(embedding, kVal);
-                    if (res.confidences[res.label] > 0.75) {
-                        label = res.label;
-                        isKnown = true;
-                        source = 'memory';
-                    }
+                    if (res.confidences[res.label] > 0.75) { label = res.label; isKnown = true; source = 'memory'; }
                 } catch(e) { } finally { embedding.dispose(); }
             } else {
-                const vidCX = (cx - offX) / scale;
-                const vidCY = (cy - offY) / scale;
-                const vidSize = size / scale;
+                const vidCX = (cx - offX) / scale; const vidCY = (cy - offY) / scale; const vidSize = size / scale;
                 neuralEye.drawImage(video, vidCX - vidSize/2, vidCY - vidSize/2, vidSize, vidSize, 0, 0, 224, 224);
             }
 
@@ -460,14 +416,9 @@
         }
 
         function drawHUD() {
-            const cx = canvas.width / 2;
-            const cy = canvas.height / 2;
-            const size = 100;
+            const cx = canvas.width / 2; const cy = canvas.height / 2; const size = 100;
             const color = centerObject.source === 'memory' ? '#00f3ff' : (centerObject.source === 'auto' ? '#ffcc00' : 'rgba(255,255,255,0.3)');
-            
-            ctx.strokeStyle = color;
-            ctx.lineWidth = centerObject.isKnown ? 3 : 1;
-            
+            ctx.strokeStyle = color; ctx.lineWidth = centerObject.isKnown ? 3 : 1;
             const len = 15;
             ctx.beginPath();
             ctx.moveTo(cx - size, cy - size + len); ctx.lineTo(cx - size, cy - size); ctx.lineTo(cx - size + len, cy - size);
@@ -475,24 +426,16 @@
             ctx.moveTo(cx + size, cy + size - len); ctx.lineTo(cx + size, cy + size); ctx.lineTo(cx + size - len, cy + size);
             ctx.moveTo(cx - size + len, cy + size); ctx.lineTo(cx - size, cy + size); ctx.lineTo(cx - size, cy + size - len);
             ctx.stroke();
-
-            ctx.fillStyle = color;
-            ctx.beginPath(); ctx.arc(cx, cy, 2, 0, Math.PI*2); ctx.fill();
-
+            ctx.fillStyle = color; ctx.beginPath(); ctx.arc(cx, cy, 2, 0, Math.PI*2); ctx.fill();
             if (centerObject.isKnown) {
-                ctx.font = "bold 20px Inter, sans-serif";
-                ctx.fillStyle = color;
-                const text = centerObject.label;
-                const tw = ctx.measureText(text).width;
+                ctx.font = "bold 20px Inter, sans-serif"; ctx.fillStyle = color;
+                const text = centerObject.label; const tw = ctx.measureText(text).width;
                 ctx.fillText(text, cx - tw/2, cy - size - 15);
-                
-                ctx.font = "10px sans-serif";
-                ctx.fillStyle = "rgba(255,255,255,0.7)";
+                ctx.font = "10px sans-serif"; ctx.fillStyle = "rgba(255,255,255,0.7)";
                 const origin = centerObject.source === 'memory' ? "MEMÓRIA" : "AUTO DETECT";
                 const ow = ctx.measureText(origin).width;
                 ctx.fillText(origin, cx - ow/2, cy - size - 40);
             }
-
             ctx.lineWidth = 1;
             detectedBoxes.forEach(box => {
                 const dist = Math.hypot((box.x+box.w/2)-cx, (box.y+box.h/2)-cy);
@@ -502,48 +445,27 @@
             });
         }
 
-        // --- PROTOCOLO BINÁRIO (.nvis) COM DEBUG ---
-
+        // --- BINARY DOWNLOAD ---
         async function downloadBinary() {
-            if (classifier.getNumClasses() === 0) return showToast("Nada para salvar.", true);
-
+            if (classifier.getNumClasses() === 0) return showToast("Vazio", true);
             try {
-                appLog("Iniciando Backup Binário...");
                 const dataset = classifier.getClassifierDataset();
-                
-                let manifest = {};
-                let totalElements = 0;
-                
+                let manifest = {}; let totalElements = 0;
                 Object.keys(dataset).forEach((label) => {
                     const tensor = dataset[label];
-                    const size = tensor.size;
-                    manifest[label] = {
-                        shape: tensor.shape,
-                        length: size
-                    };
-                    totalElements += size;
+                    manifest[label] = { shape: tensor.shape, length: tensor.size };
+                    totalElements += tensor.size;
                 });
-                
-                appLog(`Classes: ${Object.keys(manifest).length}, Elementos: ${totalElements}`);
-
                 const manifestStr = JSON.stringify(manifest);
                 const manifestBytes = new TextEncoder().encode(manifestStr);
-                const manifestLen = manifestBytes.length;
-
-                const totalByteSize = 4 + 4 + manifestLen + (totalElements * 4);
-                appLog(`Tamanho Total Estimado: ${(totalByteSize/1024/1024).toFixed(2)} MB`);
-                
+                const totalByteSize = 4 + 4 + manifestBytes.length + (totalElements * 4);
                 const buffer = new ArrayBuffer(totalByteSize);
                 const view = new DataView(buffer);
                 const uint8View = new Uint8Array(buffer);
-
-                // Header
-                uint8View.set([78, 86, 73, 83], 0); // NVIS
-                view.setUint32(4, manifestLen, true);
+                uint8View.set([78, 86, 73, 83], 0); 
+                view.setUint32(4, manifestBytes.length, true);
                 uint8View.set(manifestBytes, 8);
-
-                let currentByteOffset = 8 + manifestLen;
-                
+                let currentByteOffset = 8 + manifestBytes.length;
                 Object.keys(dataset).forEach((label) => {
                     const data = dataset[label].dataSync();
                     for(let i=0; i<data.length; i++) {
@@ -551,101 +473,79 @@
                         currentByteOffset += 4;
                     }
                 });
-
                 const blob = new Blob([buffer], {type: "application/octet-stream"});
                 const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.style.display = 'none';
-                a.href = url;
-                a.download = `neural_memory_${new Date().getTime()}.nvis`;
-                document.body.appendChild(a);
-                a.click();
+                const a = document.createElement('a'); a.style.display = 'none'; a.href = url;
+                // Mudar para .bin para compatibilidade
+                a.download = `neural_mem_${new Date().getTime()}.bin`;
+                document.body.appendChild(a); a.click();
                 setTimeout(() => { document.body.removeChild(a); window.URL.revokeObjectURL(url); }, 100);
-                
-                appLog("Backup gerado com sucesso!", 'success');
-                showToast("Arquivo .nvis gerado!");
-
-            } catch(e) {
-                appLog(`ERRO BACKUP: ${e.message}`, 'error');
-                showToast("Erro ao gerar binário", true);
-            }
+                showToast("Arquivo .bin gerado!");
+            } catch(e) { appLog(e.message, 'error'); showToast("Erro Backup", true); }
         }
 
+        // --- UPLOAD SAFE ---
         function uploadBinary(input) {
             const file = input.files[0];
             if(!file) return;
+            
+            // Limpa input para permitir selecionar o mesmo arquivo se falhar
+            input.value = '';
 
-            // Ativa o console automaticamente
-            document.getElementById('debug-console').style.display = 'block';
-            appLog(`Iniciando restauração de: ${file.name}`);
-            appLog(`Tamanho: ${(file.size/1024/1024).toFixed(2)} MB`);
+            document.getElementById('processing-screen').style.display = 'flex';
+            document.getElementById('proc-msg').innerText = "Lendo Bytes...";
+            appLog("Iniciando leitura de arquivo...");
 
             const reader = new FileReader();
-            
             reader.onload = (e) => {
                 try {
-                    appLog("Arquivo lido para memória RAM");
                     const buffer = e.target.result;
                     const view = new DataView(buffer);
                     const uint8View = new Uint8Array(buffer);
 
-                    // 1. Validar Magic
-                    if(uint8View[0] !== 78 || uint8View[1] !== 86) {
-                        throw new Error("Assinatura de arquivo inválida (Não é um .nvis)");
-                    }
-                    appLog("Assinatura NVIS válida");
-
-                    // 2. Ler Manifesto
-                    const manifestLen = view.getUint32(4, true);
-                    appLog(`Manifesto de ${manifestLen} bytes detectado`);
+                    if(uint8View[0] !== 78 || uint8View[1] !== 86) throw new Error("Formato Inválido (Magic Bytes)");
                     
+                    const manifestLen = view.getUint32(4, true);
                     const manifestBytes = uint8View.slice(8, 8 + manifestLen);
-                    const manifestStr = new TextDecoder().decode(manifestBytes);
-                    const manifest = JSON.parse(manifestStr);
-                    appLog(`Classes encontradas: ${Object.keys(manifest).join(', ')}`);
-
-                    // 3. Reconstruir
+                    const manifest = JSON.parse(new TextDecoder().decode(manifestBytes));
+                    
                     let currentByteOffset = 8 + manifestLen;
                     const newDataset = {};
 
                     Object.keys(manifest).forEach(label => {
                         const info = manifest[label];
                         const floats = new Float32Array(info.length);
-                        
                         for(let i=0; i<info.length; i++) {
                             floats[i] = view.getFloat32(currentByteOffset, true);
                             currentByteOffset += 4;
                         }
-                        
                         newDataset[label] = tf.tensor(floats, info.shape);
                     });
-                    
-                    appLog("Tensores reconstruídos com sucesso");
 
                     classifier.clearAllClasses();
                     classifier.setClassifierDataset(newDataset);
+                    saveDataToStorage(); updateCount();
                     
-                    saveDataToStorage(); 
-                    
-                    updateCount();
-                    showToast("Sucesso! Memória carregada.");
-                    appLog("Restauração Concluída!", 'success');
-                    
-                    setTimeout(() => {
-                        hideDebug();
-                        closeSettings();
-                    }, 3000);
+                    document.getElementById('processing-screen').style.display = 'none';
+                    showToast("Sucesso!");
+                    closeSettings();
+                    appLog("Sucesso na importação.");
 
                 } catch(err) {
-                    appLog(`ERRO FATAL: ${err.message}`, 'error');
-                    alert("Erro: " + err.message);
+                    document.getElementById('processing-screen').style.display = 'none';
+                    if(err.name === 'NotFoundError') {
+                        alert("ERRO DE PERMISSÃO:\nO sistema não conseguiu ler o arquivo.\n\nSOLUÇÃO: Selecione o arquivo através da pasta 'Downloads' ou 'Gerenciador de Arquivos' (evite 'Recentes').");
+                    } else {
+                        alert("Erro: " + err.message);
+                    }
+                    appLog(err.message, 'error');
                 }
             };
-            
             reader.onerror = (e) => {
-                appLog(`Erro de leitura de arquivo: ${reader.error}`, 'error');
+                document.getElementById('processing-screen').style.display = 'none';
+                alert("Erro de Leitura. Tente mover o arquivo para a memória interna.");
+                appLog("Reader Error", 'error');
             };
-
             reader.readAsArrayBuffer(file);
         }
 
@@ -658,8 +558,7 @@
                     datasetObj[key] = { data: Array.from(data), shape: dataset[key].shape };
                 });
                 localStorage.setItem('neural-v6-pro', JSON.stringify(datasetObj));
-                appLog("Salvo no storage local");
-            } catch(e) { appLog("Aviso: Storage local cheio (backup recomendado)", 'warn'); }
+            } catch(e) { }
         }
 
         async function loadDataFromStorage() {
@@ -669,11 +568,8 @@
                 const ds = {};
                 Object.keys(obj).forEach((key) => {
                     const entry = obj[key];
-                    if (Array.isArray(entry)) {
-                        ds[key] = tf.tensor(entry, [entry.length / 1024, 1024]);
-                    } else {
-                        ds[key] = tf.tensor(entry.data, entry.shape);
-                    }
+                    if (Array.isArray(entry)) { ds[key] = tf.tensor(entry, [entry.length / 1024, 1024]); } 
+                    else { ds[key] = tf.tensor(entry.data, entry.shape); }
                 });
                 classifier.setClassifierDataset(ds);
                 updateCount();
@@ -683,9 +579,7 @@
         function clearMemory() {
             classifier.clearAllClasses();
             localStorage.removeItem('neural-v6-pro');
-            updateCount();
-            closeSettings();
-            showToast("Memória Apagada");
+            updateCount(); closeSettings(); showToast("Apagado");
         }
 
         function triggerTraining() {
@@ -702,20 +596,16 @@
                 input.value = centerObject.source === 'auto' ? centerObject.label : (centerObject.source === 'memory' ? centerObject.label : "");
                 document.getElementById('train-modal').classList.add('active');
                 setTimeout(() => input.focus(), 100);
-            } catch(e) { showToast("Erro ao capturar", true); }
+            } catch(e) { showToast("Erro", true); }
         }
 
-        function cancelTraining() {
-            if (tempEmbedding) { tempEmbedding.dispose(); tempEmbedding = null; }
-            closeModal();
-        }
-
+        function cancelTraining() { if (tempEmbedding) { tempEmbedding.dispose(); tempEmbedding = null; } closeModal(); }
         function confirmTraining() {
             const label = document.getElementById('label-input').value.trim();
             if (!label || !tempEmbedding) return;
             classifier.addExample(tempEmbedding, label);
             tempEmbedding.dispose(); tempEmbedding = null;
-            closeModal(); updateCount(); showToast("Memória Adicionada!");
+            closeModal(); updateCount(); showToast("Salvo!");
             setTimeout(() => saveDataToStorage(), 50);
         }
 
@@ -725,13 +615,11 @@
             t.className = isError ? 'error active' : 'active';
             setTimeout(() => t.className = '', 2500);
         }
-
         function updateCount() {
             const counts = classifier.getClassExampleCount();
             const total = Object.values(counts).reduce((a, b) => a + b, 0);
             document.getElementById('mem-count').innerText = total;
         }
-
         function toggleSettings() { document.getElementById('settings-modal').classList.add('active'); }
         function closeSettings() { document.getElementById('settings-modal').classList.remove('active'); }
         function closeModal() { document.getElementById('train-modal').classList.remove('active'); }
