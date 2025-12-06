@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="pt-PT">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Neural Vision v6.6 - Backup Fix</title>
+    
+    <!-- TensorFlow.js -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/knn-classifier"></script>
+
+    <!-- UI -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <style>
+        :root { --accent: #00f3ff; --warn: #ffcc00; --bg: #000; }
+        body { 
+            background: var(--bg); color: white; margin: 0; overflow: hidden; 
+            font-family: 'Inter', sans-serif; touch-action: none; 
+        }
+
+        #source-video { display: none; }
+        #main-canvas { width: 100vw; height: 100vh; display: block; background: #000; }
+
+        .ui-layer {
+            position: absolute; inset: 0; pointer-events: none;
+            display: flex; flex-direction: column; justify-content: space-between;
+            z-index: 10;
+        }
+        .pointer-events-auto { pointer-events: auto; }
+
+        .glass-panel {
+            background: rgba(10, 10, 10, 0.7);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            padding: 10px; border-radius: 16px;
+        }
+
+        .btn-round {
+            width: 44px; height: 44px; border-radius: 50%;
+            background: rgba(40, 40, 40, 0.8); border: 1px solid rgba(255, 255, 255, 0.2);
+            color: white; display: flex; align-items: center; justify-content: center;
+            transition: 0.2s; cursor: pointer; pointer-events: auto;
+        }
+        .btn-round:active { transform: scale(0.9); background: var(--accent); color: black; }
+
+        .btn-train {
+            background: var(--accent); color: black; font-weight: 800;
+            padding: 14px 28px; border-radius: 99px; letter-spacing: 0.5px;
+            box-shadow: 0 0 20px rgba(0, 243, 255, 0.2); text-transform: uppercase;
+            border: none; transition: 0.2s; pointer-events: auto; font-size: 14px;
+        }
+        .btn-train:active { transform: scale(0.95); }
+
+        #neural-eye {
+            width: 80px; height: 80px;
+            border: 2px solid var(--accent);
+            border-radius: 12px;
+            background: #000;
+            overflow: hidden;
+            box-shadow: 0 0 15px rgba(0, 243, 255, 0.3);
+        }
+
+        #loader, #error-screen, #start-screen {
+            position: fixed; inset: 0; z-index: 100; background: #000;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+        }
+        #error-screen, #start-screen { display: none; z-index: 110; background: rgba(0,0,0,0.95); }
+
+        .modal-wrap {
+            position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 50;
+            display: flex; align-items: flex-end; opacity: 0; pointer-events: none; transition: 0.2s;
+        }
+        .modal-wrap.active { opacity: 1; pointer-events: auto; }
+        .modal-body {
+            background: #111; width: 100%; padding: 24px; border-radius: 24px 24px 0 0;
+            border-top: 1px solid #333; transform: translateY(100%); transition: 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+        }
+        .modal-wrap.active .modal-body { transform: translateY(0); }
+        @media(min-width: 640px) {
+            .modal-wrap { align-items: center; justify-content: center; }
+            .modal-body { width: 400px; border-radius: 24px; }
+        }
+
+        input[type=text] {
+            width: 100%; background: #222; border: 1px solid #444; color: white;
+            padding: 14px; border-radius: 12px; font-size: 16px; outline: none;
+        }
+        
+        #toast {
+            position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+            background: #00f3ff; color: black; font-weight: bold; padding: 10px 20px;
+            border-radius: 30px; z-index: 200; opacity: 0; pointer-events: none; transition: 0.3s;
+            box-shadow: 0 0 20px rgba(0, 243, 255, 0.4); text-align: center; width: 80%; max-width: 300px;
+        }
+        #toast.active { opacity: 1; top: 40px; }
+        #toast.error { background: #ff4444; color: white; box-shadow: 0 0 20px rgba(255, 68, 68, 0.4); }
+    </style>
+</head>
+<body>
+
+    <div id="toast">Notificação</div>
+
+    <!-- Loading -->
+    <div id="loader">
+        <div class="w-12 h-12 border-4 border-gray-800 border-t-cyan-400 rounded-full animate-spin mb-6"></div>
+        <h1 class="text-xl font-bold text-white tracking-widest">NEURAL<span class="text-cyan-400">VISION</span></h1>
+        <p id="loader-text" class="text-gray-500 mt-2 font-mono text-[10px] uppercase">Inicializando...</p>
+    </div>
+
+    <!-- Error -->
+    <div id="error-screen">
+        <i data-lucide="alert-triangle" class="w-12 h-12 text-red-500 mb-4"></i>
+        <p id="error-msg" class="text-gray-300 mb-6 text-center px-4">Erro.</p>
+        <button onclick="location.reload()" class="px-6 py-2 bg-gray-800 rounded-full font-bold text-sm">Reiniciar</button>
+    </div>
+
+    <!-- Manual Start -->
+    <div id="start-screen">
+        <button onclick="startCameraManual()" class="w-20 h-20 rounded-full bg-cyan-500 text-black flex items-center justify-center shadow-[0_0_30px_rgba(6,182,212,0.5)] animate-pulse">
+            <i data-lucide="power" class="w-8 h-8"></i>
+        </button>
+        <p class="mt-4 text-cyan-400 font-bold text-sm">Iniciar Câmara</p>
+    </div>
+
+    <!-- Core -->
+    <video id="source-video" autoplay playsinline muted></video>
+    <canvas id="main-canvas"></canvas>
+
+    <!-- Interface AR -->
+    <div class="ui-layer p-4">
+        <div class="flex justify-between items-start pointer-events-auto">
+            <div class="flex flex-col gap-1">
+                <canvas id="neural-eye" width="224" height="224"></canvas>
+                <span class="text-[9px] text-cyan-400 font-mono text-center">OLHO DA IA</span>
+            </div>
+            <div class="flex gap-2">
+                <div class="glass-panel flex flex-col justify-center px-3 mr-2">
+                    <span class="text-[9px] text-gray-400 uppercase font-bold">Exemplos</span>
+                    <span id="mem-count" class="text-lg font-mono text-cyan-400 font-bold leading-none">0</span>
+                </div>
+                <button onclick="switchCamera()" class="btn-round"><i data-lucide="switch-camera" width="20"></i></button>
+                <button onclick="toggleSettings()" class="btn-round"><i data-lucide="settings-2" width="20"></i></button>
+            </div>
+        </div>
+
+        <div class="flex flex-col items-center gap-3 pointer-events-auto pb-6">
+            <div id="scan-status" class="glass-panel px-6 py-2 text-xs font-bold text-gray-300 transition-colors uppercase tracking-wide">
+                Aguardando...
+            </div>
+            <div class="flex gap-3 w-full justify-center max-w-md">
+                <button onclick="triggerTraining()" class="btn-train flex-1 flex items-center justify-center gap-2">
+                    <i data-lucide="brain-circuit" width="18"></i> Memorizar
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Treino -->
+    <div id="train-modal" class="modal-wrap">
+        <div class="modal-body">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-lg font-bold text-white">Memorizar</h3>
+                <button onclick="cancelTraining()" class="text-gray-400"><i data-lucide="x"></i></button>
+            </div>
+            <div class="flex gap-3 mb-4 bg-gray-900 p-3 rounded-xl border border-gray-800">
+                <img id="preview-img" class="w-16 h-16 object-cover rounded-lg bg-black border border-gray-700">
+                <div class="flex flex-col justify-center">
+                    <span class="text-[10px] text-gray-500 uppercase font-bold mb-1">IA Viu:</span>
+                    <span id="ai-guess" class="text-cyan-400 font-mono text-xs">...</span>
+                </div>
+            </div>
+            <input type="text" id="label-input" placeholder="Nome (ex: Garrafa)" autocomplete="off">
+            <button onclick="confirmTraining()" class="w-full mt-4 bg-cyan-500 hover:bg-cyan-400 text-black font-bold py-3 rounded-xl text-sm transition">
+                CONFIRMAR
+            </button>
+        </div>
+    </div>
+
+    <!-- Modal Settings -->
+    <div id="settings-modal" class="modal-wrap">
+        <div class="modal-body">
+            <h3 class="text-lg font-bold mb-4">Dados</h3>
+            <div class="grid grid-cols-2 gap-3 mb-4">
+                <button onclick="downloadData()" class="py-4 bg-gray-800 rounded-xl text-xs font-bold flex flex-col items-center gap-2 hover:bg-gray-700 transition">
+                    <i data-lucide="download" width="20" class="text-cyan-400"></i>
+                    <span>Baixar Backup</span>
+                </button>
+                <label class="py-4 bg-gray-800 rounded-xl text-xs font-bold flex flex-col items-center gap-2 cursor-pointer hover:bg-gray-700 transition">
+                    <i data-lucide="upload" width="20" class="text-green-400"></i>
+                    <span>Restaurar</span>
+                    <input type="file" class="hidden" onchange="uploadData(this)">
+                </label>
+            </div>
+            <button onclick="clearMemory()" class="w-full py-3 text-red-400 border border-red-900/50 rounded-xl hover:bg-red-900/20 font-bold text-xs mb-3">
+                Apagar Toda Memória
+            </button>
+             <button onclick="closeSettings()" class="w-full py-3 bg-gray-800 rounded-xl font-bold text-xs">
+                Fechar
+            </button>
+        </div>
+    </div>
+
+    <script>
+        lucide.createIcons();
+
+        const video = document.getElementById('source-video');
+        const canvas = document.getElementById('main-canvas');
+        const ctx = canvas.getContext('2d', { alpha: false });
+        const neuralEye = document.getElementById('neural-eye').getContext('2d');
+        const statusDiv = document.getElementById('scan-status');
+        const loader = document.getElementById('loader');
+        
+        let models = {};
+        let classifier;
+        let isRunning = false;
+        let facingMode = 'environment';
+        
+        let centerObject = { label: "...", isKnown: false, source: 'none' }; 
+        let detectedBoxes = [];
+        let tempEmbedding = null;
+        
+        const translations = {
+            'person': 'Pessoa', 'cup': 'Copo', 'bottle': 'Garrafa', 'cell phone': 'Telemóvel', 
+            'laptop': 'Portátil', 'mouse': 'Rato', 'keyboard': 'Teclado', 'chair': 'Cadeira', 
+            'book': 'Livro', 'remote': 'Comando', 'tv': 'Televisão', 'potted plant': 'Planta'
+        };
+
+        // --- INICIALIZAÇÃO ---
+        async function init() {
+            try {
+                await tryStartCamera();
+
+                document.getElementById('loader-text').innerText = "Carregando Cérebro...";
+                
+                const [ssd, mobile] = await Promise.all([
+                    cocoSsd.load({ base: 'lite_mobilenet_v2' }), 
+                    mobilenet.load()
+                ]);
+                models.ssd = ssd;
+                models.mobile = mobile;
+                
+                classifier = knnClassifier.create();
+                
+                try {
+                    await loadDataFromStorage();
+                } catch(e) {
+                    console.log("Sem memória local.");
+                }
+
+                loader.classList.add('opacity-0');
+                setTimeout(() => loader.remove(), 500);
+                
+                isRunning = true;
+                gameLoop();
+
+            } catch (e) {
+                console.error(e);
+                showError("Erro: " + e.message);
+            }
+        }
+
+        async function tryStartCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    audio: false,
+                    video: { facingMode: facingMode, width: { ideal: 1280 }, height: { ideal: 720 } }
+                });
+                video.srcObject = stream;
+                return new Promise((resolve, reject) => {
+                    video.onloadedmetadata = () => {
+                        video.play().then(resolve).catch(() => {
+                            loader.style.display = 'none';
+                            document.getElementById('start-screen').style.display = 'flex';
+                        });
+                    };
+                });
+            } catch (err) {
+                showError("Sem acesso à câmara.");
+                throw err;
+            }
+        }
+
+        function startCameraManual() {
+            document.getElementById('start-screen').style.display = 'none';
+            video.play().then(() => {
+                if(!models.ssd) loader.style.display = 'flex';
+            }).catch(e => showError(e));
+        }
+
+        function showError(msg) {
+            loader.style.display = 'none';
+            document.getElementById('error-screen').style.display = 'flex';
+            document.getElementById('error-msg').innerText = msg;
+        }
+
+        function switchCamera() {
+            facingMode = facingMode === 'user' ? 'environment' : 'user';
+            isRunning = false;
+            tryStartCamera().then(() => { isRunning = true; gameLoop(); });
+        }
+
+        // --- ENGINE ---
+        async function gameLoop() {
+            if (!isRunning) return;
+
+            if (canvas.width !== window.innerWidth || canvas.height !== window.innerHeight) {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+            }
+
+            const screenRatio = canvas.width / canvas.height;
+            const videoRatio = (video.videoWidth || 1280) / (video.videoHeight || 720);
+            let drawW, drawH, startX, startY;
+
+            if (screenRatio > videoRatio) {
+                drawW = canvas.width; drawH = drawW / videoRatio; startX = 0; startY = (canvas.height - drawH) / 2;
+            } else {
+                drawH = canvas.height; drawW = drawH * videoRatio; startX = (canvas.width - drawW) / 2; startY = 0;
+            }
+
+            if (video.readyState >= 2) {
+                ctx.drawImage(video, startX, startY, drawW, drawH);
+                
+                try {
+                    const predictions = await models.ssd.detect(video, 30, 0.25);
+                    const scale = drawW / video.videoWidth;
+                    detectedBoxes = predictions.map(p => ({
+                        x: startX + (p.bbox[0] * scale),
+                        y: startY + (p.bbox[1] * scale),
+                        w: p.bbox[2] * scale,
+                        h: p.bbox[3] * scale,
+                        class: p.class
+                    }));
+                    await analyzeCenter(startX, startY, scale);
+                } catch (e) { }
+
+                drawHUD();
+            }
+            requestAnimationFrame(gameLoop);
+        }
+
+        // --- INTELLIGENCE ---
+        async function analyzeCenter(offX, offY, scale) {
+            const size = 250; 
+            const cx = canvas.width / 2;
+            const cy = canvas.height / 2;
+            
+            let label = null;
+            let isKnown = false;
+            let source = 'none';
+
+            // 1. Memória
+            const exampleCounts = classifier.getClassExampleCount();
+            const totalExamples = Object.values(exampleCounts).reduce((a, b) => a + b, 0);
+            
+            if (totalExamples > 0) {
+                const embedding = tf.tidy(() => {
+                    const vidCX = (cx - offX) / scale;
+                    const vidCY = (cy - offY) / scale;
+                    const vidSize = size / scale;
+                    const temp = document.createElement('canvas');
+                    temp.width = 224; temp.height = 224;
+                    const tCtx = temp.getContext('2d');
+                    tCtx.drawImage(video, vidCX - vidSize/2, vidCY - vidSize/2, vidSize, vidSize, 0, 0, 224, 224);
+                    neuralEye.drawImage(temp, 0, 0, 224, 224);
+                    return models.mobile.infer(tf.browser.fromPixels(temp), true);
+                });
+
+                try {
+                    const kVal = Math.max(1, Math.min(3, totalExamples));
+                    const res = await classifier.predictClass(embedding, kVal);
+                    if (res.confidences[res.label] > 0.75) {
+                        label = res.label;
+                        isKnown = true;
+                        source = 'memory';
+                    }
+                } catch(e) { } finally { embedding.dispose(); }
+            } else {
+                const vidCX = (cx - offX) / scale;
+                const vidCY = (cy - offY) / scale;
+                const vidSize = size / scale;
+                neuralEye.drawImage(video, vidCX - vidSize/2, vidCY - vidSize/2, vidSize, vidSize, 0, 0, 224, 224);
+            }
+
+            // 2. Auto
+            if (!isKnown) {
+                const centerBox = detectedBoxes.find(b => cx >= b.x && cx <= (b.x + b.w) && cy >= b.y && cy <= (b.y + b.h));
+                if (centerBox) {
+                    const raw = centerBox.class;
+                    label = translations[raw] || raw;
+                    label = label.charAt(0).toUpperCase() + label.slice(1);
+                    isKnown = true;
+                    source = 'auto';
+                }
+            }
+
+            centerObject = { label: label || "Desconhecido", isKnown, source };
+            
+            if (isKnown) {
+                statusDiv.innerText = label;
+                statusDiv.style.color = source === 'memory' ? '#00f3ff' : '#ffcc00';
+                statusDiv.style.borderColor = source === 'memory' ? '#00f3ff' : '#ffcc00';
+            } else {
+                statusDiv.innerText = "Aponte para Memorizar";
+                statusDiv.style.color = '#777';
+                statusDiv.style.borderColor = 'rgba(255,255,255,0.1)';
+            }
+        }
+
+        function drawHUD() {
+            const cx = canvas.width / 2;
+            const cy = canvas.height / 2;
+            const size = 100;
+            const color = centerObject.source === 'memory' ? '#00f3ff' : (centerObject.source === 'auto' ? '#ffcc00' : 'rgba(255,255,255,0.3)');
+            
+            ctx.strokeStyle = color;
+            ctx.lineWidth = centerObject.isKnown ? 3 : 1;
+            
+            const len = 15;
+            ctx.beginPath();
+            ctx.moveTo(cx - size, cy - size + len); ctx.lineTo(cx - size, cy - size); ctx.lineTo(cx - size + len, cy - size);
+            ctx.moveTo(cx + size - len, cy - size); ctx.lineTo(cx + size, cy - size); ctx.lineTo(cx + size, cy - size + len);
+            ctx.moveTo(cx + size, cy + size - len); ctx.lineTo(cx + size, cy + size); ctx.lineTo(cx + size - len, cy + size);
+            ctx.moveTo(cx - size + len, cy + size); ctx.lineTo(cx - size, cy + size); ctx.lineTo(cx - size, cy + size - len);
+            ctx.stroke();
+
+            ctx.fillStyle = color;
+            ctx.beginPath(); ctx.arc(cx, cy, 2, 0, Math.PI*2); ctx.fill();
+
+            if (centerObject.isKnown) {
+                ctx.font = "bold 20px Inter, sans-serif";
+                ctx.fillStyle = color;
+                const text = centerObject.label;
+                const tw = ctx.measureText(text).width;
+                ctx.fillText(text, cx - tw/2, cy - size - 15);
+                
+                ctx.font = "10px sans-serif";
+                ctx.fillStyle = "rgba(255,255,255,0.7)";
+                const origin = centerObject.source === 'memory' ? "MEMÓRIA" : "AUTO DETECT";
+                const ow = ctx.measureText(origin).width;
+                ctx.fillText(origin, cx - ow/2, cy - size - 40);
+            }
+
+            ctx.lineWidth = 1;
+            detectedBoxes.forEach(box => {
+                const dist = Math.hypot((box.x+box.w/2)-cx, (box.y+box.h/2)-cy);
+                if (dist < 100) return; 
+                ctx.strokeStyle = "rgba(255, 204, 0, 0.3)";
+                ctx.beginPath(); ctx.rect(box.x, box.y, box.w, box.h); ctx.stroke();
+            });
+        }
+
+        // --- BACKUP ROBUSTO (CORRIGIDO) ---
+
+        function downloadData() {
+            if (classifier.getNumClasses() === 0) {
+                return showToast("Nada para salvar. Treine algo primeiro.", true);
+            }
+
+            try {
+                // Sincroniza dados da memória
+                const dataset = classifier.getClassifierDataset();
+                let datasetObj = {};
+                
+                Object.keys(dataset).forEach((key) => {
+                    let data = dataset[key].dataSync();
+                    datasetObj[key] = {
+                        data: Array.from(data),
+                        shape: dataset[key].shape
+                    };
+                });
+                
+                const json = JSON.stringify(datasetObj);
+                
+                // Criação segura do blob e link
+                const blob = new Blob([json], {type: "application/json"});
+                const url = URL.createObjectURL(blob);
+                
+                // Cria elemento <a> invisível anexado ao DOM (obrigatório para iOS)
+                const a = document.createElement('a');
+                a.style.display = 'none';
+                a.href = url;
+                a.download = `neural_memory_${new Date().getTime()}.json`;
+                
+                document.body.appendChild(a);
+                a.click();
+                
+                // Cleanup
+                setTimeout(() => {
+                    document.body.removeChild(a);
+                    window.URL.revokeObjectURL(url);
+                }, 100);
+
+                showToast("Download Iniciado!");
+
+            } catch(e) {
+                console.error(e);
+                showToast("Erro ao criar arquivo", true);
+            }
+        }
+
+        function uploadData(input) {
+            const file = input.files[0];
+            if(!file) return;
+            
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const jsonStr = e.target.result;
+                    const datasetObj = JSON.parse(jsonStr);
+                    const dataset = {};
+                    
+                    Object.keys(datasetObj).forEach((key) => {
+                        const entry = datasetObj[key];
+                        // Compatibilidade com versões antigas (array simples) vs novas (objeto com shape)
+                        if (Array.isArray(entry)) {
+                            dataset[key] = tf.tensor(entry, [entry.length / 1024, 1024]);
+                        } else {
+                            dataset[key] = tf.tensor(entry.data, entry.shape);
+                        }
+                    });
+                    
+                    classifier.clearAllClasses();
+                    classifier.setClassifierDataset(dataset);
+                    
+                    // Salva no local storage também
+                    saveDataToStorage();
+                    updateCount();
+                    showToast("Memória Restaurada com Sucesso!");
+                    closeSettings();
+                } catch(err) {
+                    showToast("Arquivo Inválido", true);
+                    console.error(err);
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        // --- AÇÕES UI ---
+
+        function triggerTraining() {
+            try {
+                if (tempEmbedding) tempEmbedding.dispose();
+                tempEmbedding = tf.tidy(() => {
+                    const eyeCanvas = document.getElementById('neural-eye');
+                    return models.mobile.infer(tf.browser.fromPixels(eyeCanvas), true);
+                });
+
+                const eyeCanvas = document.getElementById('neural-eye');
+                document.getElementById('preview-img').src = eyeCanvas.toDataURL();
+                document.getElementById('ai-guess').innerText = centerObject.label;
+                
+                const input = document.getElementById('label-input');
+                input.value = centerObject.source === 'auto' ? centerObject.label : (centerObject.source === 'memory' ? centerObject.label : "");
+                
+                document.getElementById('train-modal').classList.add('active');
+                setTimeout(() => input.focus(), 100);
+            } catch(e) { showToast("Erro ao capturar", true); }
+        }
+
+        function cancelTraining() {
+            if (tempEmbedding) { tempEmbedding.dispose(); tempEmbedding = null; }
+            closeModal();
+        }
+
+        function confirmTraining() {
+            const label = document.getElementById('label-input').value.trim();
+            if (!label || !tempEmbedding) return;
+
+            classifier.addExample(tempEmbedding, label);
+            tempEmbedding.dispose();
+            tempEmbedding = null;
+            
+            closeModal();
+            updateCount();
+            showToast("Memória Adicionada!");
+            
+            setTimeout(() => saveDataToStorage(), 50);
+        }
+
+        function showToast(msg, isError = false) {
+            const t = document.getElementById('toast');
+            t.innerText = msg;
+            t.className = isError ? 'error active' : 'active';
+            setTimeout(() => t.className = '', 2500);
+        }
+
+        function updateCount() {
+            const counts = classifier.getClassExampleCount();
+            const total = Object.values(counts).reduce((a, b) => a + b, 0);
+            document.getElementById('mem-count').innerText = total;
+        }
+
+        async function saveDataToStorage() {
+            try {
+                const dataset = classifier.getClassifierDataset();
+                let datasetObj = {};
+                Object.keys(dataset).forEach((key) => {
+                    let data = dataset[key].dataSync();
+                    datasetObj[key] = { data: Array.from(data), shape: dataset[key].shape };
+                });
+                localStorage.setItem('neural-v6-pro', JSON.stringify(datasetObj));
+            } catch(e) { console.warn("Storage local cheio."); }
+        }
+
+        async function loadDataFromStorage() {
+            const str = localStorage.getItem('neural-v6-pro');
+            if (str) {
+                const obj = JSON.parse(str);
+                const ds = {};
+                Object.keys(obj).forEach((key) => {
+                    const entry = obj[key];
+                    if (Array.isArray(entry)) {
+                        ds[key] = tf.tensor(entry, [entry.length / 1024, 1024]);
+                    } else {
+                        ds[key] = tf.tensor(entry.data, entry.shape);
+                    }
+                });
+                classifier.setClassifierDataset(ds);
+                updateCount();
+            }
+        }
+        
+        function clearMemory() {
+            classifier.clearAllClasses();
+            localStorage.removeItem('neural-v6-pro');
+            updateCount();
+            closeSettings();
+            showToast("Memória Apagada");
+        }
+
+        function toggleSettings() { document.getElementById('settings-modal').classList.add('active'); }
+        function closeSettings() { document.getElementById('settings-modal').classList.remove('active'); }
+        function closeModal() { document.getElementById('train-modal').classList.remove('active'); }
+
+        init();
+    </script>
+</body>
+</html>
